@@ -2,9 +2,11 @@
 #   rewritten to Python by msm
 # Licensed under Apache 2.0
 #
+# Override a jump opcode so it jumps to the computed jump.
+#
 # Usage:
-# 1. add the COMPUTED_JUMP references to the branch instruction
-# 2. run the script
+# 1. Add the COMPUTED_JUMP references to the branch instruction manually
+# 2. run the script when cursor is over the branch instruction
 # //@category Repair
 
 from ghidralib import *
