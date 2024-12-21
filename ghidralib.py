@@ -6,6 +6,7 @@ from ghidra.program.model.pcode import HighFunctionDBUtil
 from ghidra.app.util.cparser.C import CParser
 from ghidra.program.model.lang import Register as GhRegister
 from ghidra.program.model.pcode import Varnode as GhVarnode
+from ghidra.program.model.pcode import BlockGraph as GhBlockGraph, BlockCopy
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
 from ghidra.program.model.address import GenericAddress
 from ghidra.program.model.symbol import RefType as GhRefType
@@ -271,6 +272,10 @@ class PcodeOp(GhidraWrapper):
     PCODE_MAX = 74
 
     @property
+    def address(self):  # type: () -> int
+        return self.raw.getSeqnum().getTarget().getOffset()
+
+    @property
     def opcode(self):  # type: () -> int
         return self.raw.getOpcode()
 
@@ -289,6 +294,42 @@ class PcodeOp(GhidraWrapper):
         return Varnode(self.raw.getOutput())
 
 
+def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
+    """Create a BlockGraph or PcodeBlock, depending on arg type
+
+    This is not technically necessary, but we use it because some people
+    (including Ghidra code) use isinstance() checks to dispatch types.
+    """
+    if isinstance(raw, GhBlockGraph):
+        return BlockGraph(raw)
+    return PcodeBlock(raw)
+
+
+class PcodeBlock(GhidraWrapper):
+    @property
+    def outgoing_edges(self):  # type: () -> list[PcodeBlock]
+        return [_pcode_node(self.raw.getOut(i)) for i in range(self.raw.getOutSize())]
+
+    @property
+    def incoming_edges(self):  # type: () -> list[PcodeBlock]
+        return [_pcode_node(self.raw.getIn(i)) for i in range(self.raw.getInSize())]
+
+    @property
+    def is_graph(self):  # type: () -> bool
+        return isinstance(self.raw, GhBlockGraph)
+
+    @property
+    def pcode(self):  # type: () -> list[PcodeOp]
+        raw_pcode = collect_iterator(self.raw.getRef().getIterator())
+        return [PcodeOp(raw) for raw in raw_pcode]
+
+
+class BlockGraph(PcodeBlock):
+    @property
+    def blocks(self):  # type: () -> list[PcodeBlock]
+        return [_pcode_node(self.raw.getBlock(i)) for i in range(self.raw.getSize())]
+
+
 class HighFunction(GhidraWrapper):
     def get_pcode_at(self, address):  # type: (Addr) -> list[PcodeOp]
         address = resolve(address)
@@ -297,6 +338,28 @@ class HighFunction(GhidraWrapper):
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps()]
+
+    @property
+    def basic_blocks(self):  # type: () -> list[PcodeBlock]
+        return [PcodeBlock(raw) for raw in self.raw.getBasicBlocks()]
+
+    def get_ast(self):  # type: () -> BlockGraph
+        edge_map = {}
+        ingraph = GhBlockGraph()
+        for block in self.basic_blocks:
+            gb = BlockCopy(block.raw, block.raw.getStart())
+            ingraph.addBlock(gb)
+            edge_map[block.raw] = gb
+
+        for block in self.basic_blocks:
+            for edge in block.outgoing_edges:
+                ingraph.addEdge(edge_map[block.raw], edge_map[edge.raw])
+
+        ingraph.setIndices()
+        decompiler = DecompInterface()
+        decompiler.openProgram(currentProgram)
+        outgraph = decompiler.structureGraph(ingraph, 0, monitor)
+        return BlockGraph(outgraph)
 
 
 class Reference(GhidraWrapper):
