@@ -8,6 +8,7 @@ from ghidra.program.model.lang import Register as GhRegister
 from ghidra.program.model.pcode import Varnode as GhVarnode
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
 from ghidra.program.model.address import GenericAddress
+from ghidra.program.model.symbol import RefType as GhRefType
 from ghidra.app.emulator import EmulatorHelper
 from __main__ import (
     toAddr,
@@ -20,7 +21,9 @@ from __main__ import (
     getReferencesTo,
     currentProgram,
     getInstructionAt,
-    getBytes
+    getBytes,
+    currentLocation,
+    monitor,
 )
 
 try:
@@ -28,6 +31,7 @@ try:
     from typing import Any, Callable, TYPE_CHECKING
 except ImportError:
     TYPE_CHECKING = False
+
 
 class JavaObject:
     def __getattribute__(self, name):  # type: (str) -> Any
@@ -108,17 +112,11 @@ class GhidraWrapper:
         return self.raw.equals(other)
 
 
-class RefType(GhidraWrapper):
-    @property
-    def is_call(self):  # type: () -> bool
-        return self.raw.isCall()
-
-
 class HighVariable(GhidraWrapper):
     @property
     def symbol(self):  # type: () -> HighSymbol
         return HighSymbol(self.raw.getSymbol())
-    
+
     def rename(self, new_name):  # type: (str) -> None
         self.symbol.rename(new_name)
 
@@ -145,11 +143,11 @@ class Varnode(GhidraWrapper):
         return self.raw.getOffset()
 
     @property
-    def offset(self): # type: () -> int
+    def offset(self):  # type: () -> int
         return self.raw.getOffset()
 
     @property
-    def size(self): # type: () -> int
+    def size(self):  # type: () -> int
         return self.raw.getSize()
 
     @property
@@ -161,7 +159,7 @@ class Varnode(GhidraWrapper):
         return self.high.symbol
 
     @property
-    def is_constant(self): # type: () -> bool
+    def is_constant(self):  # type: () -> bool
         """Note: addresses are not constants in Ghidra-speak.
         Use has_value to check if the varnode has a predictable value."""
         return self.raw.isConstant()
@@ -179,7 +177,7 @@ class Varnode(GhidraWrapper):
         return self.raw.isUnique()
 
     @property
-    def is_hash(self): # type: () -> bool
+    def is_hash(self):  # type: () -> bool
         return self.raw.isHash()
 
     def rename(self, new_name):  # type: (str) -> None
@@ -187,11 +185,11 @@ class Varnode(GhidraWrapper):
         self.symbol.rename(new_name)
 
     @property
-    def is_free(self): # type: () -> bool
+    def is_free(self):  # type: () -> bool
         return self.raw.isFree()
 
     @property
-    def free(self): # type: () -> Varnode
+    def free(self):  # type: () -> Varnode
         return Varnode(GhVarnode(self.raw.getAddress(), self.raw.getSize()))
 
 
@@ -307,6 +305,10 @@ class Reference(GhidraWrapper):
         return self.reftype.is_call
 
     @property
+    def is_jump(self):  # type: () -> bool
+        return self.reftype.is_jump
+
+    @property
     def reftype(self):  # type: () -> RefType
         return RefType(self.raw.getReferenceType())
 
@@ -314,9 +316,139 @@ class Reference(GhidraWrapper):
     def from_address(self):  # type: () -> int
         return self.raw.getFromAddress().getOffset()
 
+    @property
+    def to_address(self):  # type: () -> int
+        return self.raw.getToAddress().getOffset()
+
+    # @property
+    # def source(self):  # type: () -> SourceType
+    #     return SourceType(self.raw.getSource())
+
+
+def _reftype_placeholder():  # type: () -> RefType
+    """Helper to solve the initialization order problem."""
+    return None  # type: ignore
+
+
+class RefType(GhidraWrapper):
+    @property
+    def has_fall(self):  # type: () -> bool
+        return self.raw.hasFallthrough()
+
+    @has_fall.setter
+    def has_fall(self, value):  # type: (bool) -> None
+        self.raw.setHasFall(value)
+
+    @property
+    def is_call(self):  # type: () -> bool
+        return self.raw.isCall()
+
+    @is_call.setter
+    def is_call(self, value):  # type: (bool) -> None
+        self.raw.setIsCall(value)
+
+    @property
+    def is_jump(self):  # type: () -> bool
+        return self.raw.isJump()
+
+    @is_jump.setter
+    def is_jump(self, value):  # type: (bool) -> None
+        self.raw.setIsJump(value)
+
+    @property
+    def is_computed(self):  # type: () -> bool
+        return self.raw.isComputed()
+
+    @is_computed.setter
+    def is_computed(self, value):  # type: (bool) -> None
+        self.raw.setIsComputed(value)
+
+    @property
+    def is_conditional(self):  # type: () -> bool
+        return self.raw.isConditional()
+
+    @is_conditional.setter
+    def is_conditional(self, value):  # type: (bool) -> None
+        self.raw.setIsConditional(value)
+
+    @property
+    def is_unconditional(self):  # type: () -> bool
+        return not self.is_conditional
+
+    @property
+    def is_terminal(self):  # type: () -> bool
+        return self.raw.isTerminal()
+
+    @property
+    def is_data(self):  # type: () -> bool
+        return self.raw.isData()
+
+    @property
+    def is_read(self):  # type: () -> bool
+        return self.raw.isRead()
+
+    @property
+    def is_write(self):  # type: () -> bool
+        return self.raw.isWrite()
+
+    @property
+    def is_flow(self):  # type: () -> bool
+        return self.raw.isFlow()
+
+    @property
+    def is_override(self):  # type: () -> bool
+        return self.raw.isOverride()
+
+    INVALID = _reftype_placeholder()
+    FLOW = _reftype_placeholder()
+    FALL_THROUGH = _reftype_placeholder()
+    UNCONDITIONAL_JUMP = _reftype_placeholder()
+    CONDITIONAL_JUMP = _reftype_placeholder()
+    UNCONDITIONAL_CALL = _reftype_placeholder()
+    CONDITIONAL_CALL = _reftype_placeholder()
+    TERMINATOR = _reftype_placeholder()
+    COMPUTED_JUMP = _reftype_placeholder()
+    CONDITIONAL_TERMINATOR = _reftype_placeholder()
+    COMPUTED_CALL = _reftype_placeholder()
+    CALL_TERMINATOR = _reftype_placeholder()
+    COMPUTED_CALL_TERMINATOR = _reftype_placeholder()
+    CONDITIONAL_CALL_TERMINATOR = _reftype_placeholder()
+    CONDITIONAL_COMPUTED_CALL = _reftype_placeholder()
+    CONDITIONAL_COMPUTED_JUMP = _reftype_placeholder()
+    JUMP_TERMINATOR = _reftype_placeholder()
+    INDIRECTION = _reftype_placeholder()
+    CALL_OVERRIDE_UNCONDITIONAL = _reftype_placeholder()
+    JUMP_OVERRIDE_UNCONDITIONAL = _reftype_placeholder()
+    CALLOTHER_OVERRIDE_CALL = _reftype_placeholder()
+    CALLOTHER_OVERRIDE_JUMP = _reftype_placeholder()
+
+
+RefType.INVALID = RefType(GhRefType.INVALID)
+RefType.FLOW = RefType(GhRefType.FLOW)
+RefType.FALL_THROUGH = RefType(GhRefType.FALL_THROUGH)
+RefType.UNCONDITIONAL_JUMP = RefType(GhRefType.UNCONDITIONAL_JUMP)
+RefType.CONDITIONAL_JUMP = RefType(GhRefType.CONDITIONAL_JUMP)
+RefType.UNCONDITIONAL_CALL = RefType(GhRefType.UNCONDITIONAL_CALL)
+RefType.CONDITIONAL_CALL = RefType(GhRefType.CONDITIONAL_CALL)
+RefType.TERMINATOR = RefType(GhRefType.TERMINATOR)
+RefType.COMPUTED_JUMP = RefType(GhRefType.COMPUTED_JUMP)
+RefType.CONDITIONAL_TERMINATOR = RefType(GhRefType.CONDITIONAL_TERMINATOR)
+RefType.COMPUTED_CALL = RefType(GhRefType.COMPUTED_CALL)
+RefType.CALL_TERMINATOR = RefType(GhRefType.CALL_TERMINATOR)
+RefType.COMPUTED_CALL_TERMINATOR = RefType(GhRefType.COMPUTED_CALL_TERMINATOR)
+RefType.CONDITIONAL_CALL_TERMINATOR = RefType(GhRefType.CONDITIONAL_CALL_TERMINATOR)
+RefType.CONDITIONAL_COMPUTED_CALL = RefType(GhRefType.CONDITIONAL_COMPUTED_CALL)
+RefType.CONDITIONAL_COMPUTED_JUMP = RefType(GhRefType.CONDITIONAL_COMPUTED_JUMP)
+RefType.JUMP_TERMINATOR = RefType(GhRefType.JUMP_TERMINATOR)
+RefType.INDIRECTION = RefType(GhRefType.INDIRECTION)
+RefType.CALL_OVERRIDE_UNCONDITIONAL = RefType(GhRefType.CALL_OVERRIDE_UNCONDITIONAL)
+RefType.JUMP_OVERRIDE_UNCONDITIONAL = RefType(GhRefType.JUMP_OVERRIDE_UNCONDITIONAL)
+RefType.CALLOTHER_OVERRIDE_CALL = RefType(GhRefType.CALLOTHER_OVERRIDE_CALL)
+RefType.CALLOTHER_OVERRIDE_JUMP = RefType(GhRefType.CALLOTHER_OVERRIDE_JUMP)
+
 
 class Instruction(GhidraWrapper):
-    def __init__(self, raw_or_address): # type: (JavaObject|Addr) -> None
+    def __init__(self, raw_or_address):  # type: (JavaObject|Addr) -> None
         if can_resolve(raw_or_address):
             raw = getInstructionAt(resolve(raw_or_address))
         else:
@@ -340,8 +472,12 @@ class Instruction(GhidraWrapper):
         return [PcodeOp(raw) for raw in self.raw.getPcode()]
 
     @property
-    def high_pcode(self):
+    def high_pcode(self):  # type: () -> list[PcodeOp]
         return get_high_pcode_at(self.address)
+
+    @property
+    def xrefs_from(self):  # type: () -> list[Reference]
+        return [Reference(raw) for raw in self.raw.getReferencesFrom()]
 
     def to_bytes(self):  # type: () -> bytes
         return self.raw.getBytes()
@@ -360,12 +496,25 @@ class Instruction(GhidraWrapper):
     def address(self):  # type: () -> int
         return self.raw.getAddress()
 
+    @property
+    def flow(self):  # type: () -> RefType
+        return RefType(self.raw.getFlowType())
+
+    # int opIndex, Address refAddr, RefType type, SourceType sourceType
+    def add_operand_reference(
+        self, op_ndx, ref_addr, ref_type, src_type
+    ):  # type: (int, Addr, RefType, SourceType) -> None
+        # TODO: wrap SourceType too, someday?
+        self.raw.addOperandReference(op_ndx, resolve(ref_addr), ref_type.raw, src_type)
+
 
 class BasicBlock(GhidraWrapper):
-    def __init__(self, raw_or_address): # type: (JavaObject|Addr) -> None
+    def __init__(self, raw_or_address):  # type: (JavaObject|Addr) -> None
         if can_resolve(raw_or_address):
             block_model = SimpleBlockModel(currentProgram)
-            raw = block_model.getFirstCodeBlockContaining(resolve(raw_or_address), TaskMonitor.DUMMY)
+            raw = block_model.getFirstCodeBlockContaining(
+                resolve(raw_or_address), TaskMonitor.DUMMY
+            )
         else:
             raw = raw_or_address
         GhidraWrapper.__init__(self, raw)  # type: ignore
@@ -393,7 +542,7 @@ class BasicBlock(GhidraWrapper):
         return [BasicBlock(raw.getDestinationBlock()) for raw in raw_refs]
 
     @property
-    def sources(self): # type: () -> list[BasicBlock]
+    def sources(self):  # type: () -> list[BasicBlock]
         raw_refs = collect_iterator(self.raw.getSources(TaskMonitor.DUMMY))
         return [BasicBlock(raw.getSourceBlock()) for raw in raw_refs]
 
@@ -467,7 +616,7 @@ class FunctionCall:
         emu = Emulator()
         return emu.propagate_varnodes(basicblock.start_address, self.address)
 
-    def emulate(self): # type: () -> Emulator
+    def emulate(self):  # type: () -> Emulator
         basicblock = BasicBlock(self.address)
         emu = Emulator()
         emu.emulate(basicblock.start_address, self.address)
@@ -486,7 +635,7 @@ class FunctionCall:
             # nothing compared to generating high pcode (required for getting args).
             emu = Emulator()
             state = emu.propagate_varnodes(basicblock.start_address, self.address)
-        
+
         args = []
         for varnode in self.get_args_as_varnodes():
             varnode = varnode.free
@@ -581,11 +730,21 @@ class Function(GhidraWrapper):
 
     @property
     def callers(self):  # type: () -> list[Function]
-        return [Function(raw) for raw in self.raw.getCallingFunctions(TaskMonitor.DUMMY)]
+        return [
+            Function(raw) for raw in self.raw.getCallingFunctions(TaskMonitor.DUMMY)
+        ]
 
     @property
     def called(self):  # type: () -> list[Function]
         return [Function(raw) for raw in self.raw.getCalledFunctions(TaskMonitor.DUMMY)]
+
+    @property
+    def fixup(self):  # type: () -> str
+        return self.raw.getFixup()
+
+    @fixup.setter
+    def fixup(self, fixup):  # type: (str) -> None
+        self.raw.setFixup(fixup)
 
     @property
     def calls(self):  # type: () -> list[FunctionCall]
@@ -598,16 +757,16 @@ class Function(GhidraWrapper):
     @property
     def basicblocks(self):  # type: () -> list[BasicBlock]
         block_model = BasicBlockModel(currentProgram)
-        blocks = block_model.getCodeBlocksContaining(self.raw.getBody(), TaskMonitor.DUMMY)
+        blocks = block_model.getCodeBlocksContaining(
+            self.raw.getBody(), TaskMonitor.DUMMY
+        )
         return [BasicBlock(block) for block in blocks]
 
     def _decompile(self, simplify="decompile"):  # type: (str) -> JavaObject
         decompiler = DecompInterface()
         decompiler.openProgram(currentProgram)
         decompiler.setSimplificationStyle(simplify)
-        decompiled = decompiler.decompileFunction(
-            self.raw, 5, TaskMonitor.DUMMY
-        )
+        decompiled = decompiler.decompileFunction(self.raw, 5, TaskMonitor.DUMMY)
         decompiler.closeProgram()
         decompiler.dispose()
         if decompiled is None:
@@ -779,7 +938,9 @@ class Emulator(GhidraWrapper):
             return self.raw.readRegister(reg)
         raise RuntimeError("Unsupported varnode type")
 
-    def trace_pcode(self, start, end, callback):  # type: (Addr, Addr, Callable[[PcodeOp], None]) -> None
+    def trace_pcode(
+        self, start, end, callback
+    ):  # type: (Addr, Addr, Callable[[PcodeOp], None]) -> None
         self.set_pc(start)
         current = resolve(start)
         end = resolve(end)
@@ -795,7 +956,9 @@ class Emulator(GhidraWrapper):
 
             current = self.raw.getExecutionAddress()
 
-    def propagate_varnodes(self, start, end): # type: (Addr, Addr) -> dict[Varnode, int]
+    def propagate_varnodes(
+        self, start, end
+    ):  # type: (Addr, Addr) -> dict[Varnode, int]
         known_state = {}  # type: dict[Varnode, int]
 
         def callback(op):  # type: (PcodeOp) -> None
@@ -811,7 +974,7 @@ class Emulator(GhidraWrapper):
             if resolved and op.output is not None:
                 res = self.read_varnode(op.output)
                 known_state[op.output] = res
-        
+
         self.trace_pcode(start, end, callback)
         return known_state
 
@@ -858,11 +1021,7 @@ def create_data(address, datatype):  # type: (Addr, DataType) -> None
 
 
 def get_data_type(name):  # type: (str) -> DataType|None
-    managers = (
-        state.getTool()
-        .getService(DataTypeManagerService)
-        .getDataTypeManagers()
-    )
+    managers = state.getTool().getService(DataTypeManagerService).getDataTypeManagers()
     managers = [currentProgram.getDataTypeManager()] + list(managers)
     for manager in managers:
         for datatype in manager.getAllDataTypes():
@@ -887,3 +1046,7 @@ def get_string(address):  # type: (Addr) -> str|None
     if string and string.hasStringValue():
         return string.getValue()
     return None
+
+
+def current_location():  # type: () -> int
+    return currentLocation.getAddress().getOffset()
