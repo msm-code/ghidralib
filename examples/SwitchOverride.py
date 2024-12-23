@@ -19,7 +19,7 @@ def is_computed_branch(inst):  # type: (Instruction) -> bool
     if inst.flow.is_call:
         for xref in inst.xrefs_from:
             if xref.is_call:
-                func = get_function(xref.to_address)
+                func = Function.get(xref.to_address)
                 if func and func.fixup:
                     return True
 
@@ -38,7 +38,7 @@ def switch_override(addr):  # type: (Addr) -> None
         print(" Or put CONDITIONAL_JUMP destination references at the branching instruction")  # fmt: skip
         return
 
-    func = get_function(addr)
+    func = Function.get(addr)
     if not func:
         print("Computed jump instruction must be in a Function body.")
         return
@@ -48,10 +48,10 @@ def switch_override(addr):  # type: (Addr) -> None
             0, dest, RefType.COMPUTED_JUMP, SourceType.USER_DEFINED
         )
 
-    # And now just fall-back to java
-    from ghidra.program.model.pcode import JumpTable
-    from ghidra.app.cmd.function import CreateFunctionCmd
-    from java.util import ArrayList
+    # For now, just fall-back to java at the end
+    from ghidra.program.model.pcode import JumpTable  # type: ignore
+    from ghidra.app.cmd.function import CreateFunctionCmd  # type: ignore
+    from java.util import ArrayList  # type: ignore
 
     jumpTab = JumpTable(toAddr(addr), ArrayList(toAddr(d) for d in destlist), True)
     jumpTab.writeOverride(func)

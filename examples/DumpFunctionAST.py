@@ -12,12 +12,11 @@ from ghidralib import *
 def dump(graph, ind=""):
     for block in graph.blocks:
         print("{} ({}): ".format(ind, block))
-        if block.is_graph:
+        if block.has_children:
             dump(block, ind + "  ")
         else:
             for op in block.pcode:
                 print("{}  {:x} {}".format(ind + "  ", op.address, op))
 
 
-outgraph = Function("main").get_high_function().get_ast()
-dump(outgraph)
+dump(Function("main").pcode_tree)

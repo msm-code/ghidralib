@@ -1,6 +1,4 @@
-# Ghidralib
-
-## API Documentation
+# API reference
 
 ::: ghidralib
     handler: python

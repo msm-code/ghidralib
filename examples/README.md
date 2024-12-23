@@ -10,7 +10,7 @@ This code will be also used for unit-tests in the future (I hope).
 Not everything in life is interesting. Scripts here are mostly rewritten Ghidra
 examples, or very small deobfuscation scripts.
 
-* [SwitchOverride]: Fixup a switch statement at the pointer location.
+* [SwitchOverride](./SwitchOverride.py): Fixup a switch statement at the pointer location.
 
 ## Everyday use
 
@@ -18,8 +18,8 @@ examples, or very small deobfuscation scripts.
   deobfuscation function, recovers the call parameters, and decrypts
   the obfuscated strings.
 
-## Extremely cool things
+## Pretty cool things
 
 * [DumpFunctionAST](./DumpFunctionAST.py): pretty print a function structure (AST)
-  as recovered by the decompiler. This is novel, because as far as I know nobody
-  shared a script that does this before.
+  as recovered by the decompiler. This is novel: as far as I know there was no
+  publicly available script that did this.

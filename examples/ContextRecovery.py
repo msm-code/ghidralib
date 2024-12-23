@@ -11,7 +11,7 @@ from ghidralib import *
 
 
 # Recovered by reverse-engineering
-KEY = "21 aa eb d3 48 de a8 92 06 26 44 b1 e7 85 1a b4".replace(" ", "").decode("hex")
+KEY = unhex("21 aa eb d3 48 de a8 92 06 26 44 b1 e7 85 1a b4")
 
 
 def decode(dat):
@@ -23,7 +23,7 @@ def decode(dat):
 
 for call in Function("MyCustomCrypto").calls:
     ctx = call.emulate()
-    key, data = ctx.read_register("eax"), ctx.read_register("edx")
+    key, data = ctx["eax"], ctx["edx"]
     if key and data:
-        datalen = get_u32(data - 4)
-        print(call.address, decode(get_bytes(data, datalen)))
+        datalen = read_u32(data - 4)
+        print(call.address, decode(read_bytes(data, datalen)))

@@ -2,4 +2,9 @@ site_name: My Project Documentation
 theme: readthedocs
 plugins:
   - search
-  - mkdocstrings
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: sphinx
+            heading_level: 1
