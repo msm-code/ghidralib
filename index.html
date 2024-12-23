@@ -13,7 +13,7 @@
     
       <script>
         // Current page data
-        var mkdocs_page_name = "Index";
+        var mkdocs_page_name = "Ghidralib";
         var mkdocs_page_input_path = "index.md";
         var mkdocs_page_url = null;
       </script>
@@ -41,23 +41,21 @@
 
       <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
               <ul class="current">
-                <li class="toctree-l1 current"><a class="reference internal current" href="#">Index</a>
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Ghidralib</a>
     <ul class="current">
     <li class="toctree-l2"><a class="reference internal" href="#welcome-to-ghidralib-documentation">Welcome to ghidralib documentation!</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#basic-usage">Basic Usage</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#general-conventions">General conventions</a>
-    </li>
     </ul>
                 </li>
               </ul>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="everything/">Ghidralib</a>
+                <li class="toctree-l1"><a class="reference internal" href="getting_started/">Getting Started</a>
                 </li>
               </ul>
               <ul>
-                <li class="toctree-l1"><a class="reference internal" href="program_model/">Program Model</a>
+                <li class="toctree-l1"><a class="reference internal" href="reference/">API reference</a>
                 </li>
               </ul>
       </div>
@@ -74,7 +72,7 @@
         <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
     <li><a href="." class="icon icon-home" aria-label="Docs"></a></li>
-      <li class="breadcrumb-item active">Index</li>
+      <li class="breadcrumb-item active">Ghidralib</li>
     <li class="wy-breadcrumbs-aside">
     </li>
   </ul>
@@ -83,70 +81,41 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
             <div class="section" itemprop="articleBody">
               
-                <h1 id="index">Index</h1>
+                <h1 id="ghidralib">Ghidralib</h1>
 <h2 id="welcome-to-ghidralib-documentation">Welcome to ghidralib documentation!</h2>
-<p>This library is an attempt to provide a Pythonic standard library for Ghidra.</p>
+<p><img alt="" src="dragon1.png" /></p>
+<p>This library is an attempt to provide an unofficial <strong>Pythonic standard library</strong> for Ghidra.</p>
 <p>The Ghidra scripting API, while extremely powerful, is not well suited for writing
 quick one-off scripts when reverse-engineering something at 3AM. Scripts usually
-end up verbose, fragile (no static type-checking) and with camelCaseEverywhere.</p>
-<p>The goal of this library is to make scripting easier and... fun.</p>
-<pre><code class="language-python">for block in Function(&quot;main&quot;).basicblocks:
+end up verbose, fragile (since there's no type-checking) and with camelCaseEverywhere.</p>
+<p>The goal of this library is to make Ghidra scripting faster, easier and... more fun.</p>
+<pre><code class="language-python">from ghidralib import *
+for block in Function(&quot;main&quot;).basicblocks:
     for instr in block.instructions:
         for pcode in instr.pcode:
             args = &quot;, &quot;.join(map(str, pcode.inputs_simple))
             print(&quot;{:x} {} {}&quot;.format(pcode.address, pcode.mnemonic, args))
 </code></pre>
 <h2 id="basic-usage">Basic Usage</h2>
-<p>This section contains a few small snippets to get you started. For actually useful
-examples, check out the
+<p>To use ghidralib, <strong>just drop <a href="https://github.com/msm-code/ghidralib/blob/master/ghidralib.py">this file</a> into your ghidra_scripts directory</strong>.
+Click <a href="https://raw.githubusercontent.com/msm-code/ghidralib/refs/heads/master/ghidralib.py">here</a>
+for a direct download link.</p>
+<ul>
+<li>For a showcase of useful API functions, check out the
+<a href="getting_started/">Getting Started</a> section (<strong>recommended</strong>).</li>
+<li>For a few more practical examples, check out the
 <a href="https://github.com/msm-code/ghidralib/tree/master/examples">examples directory</a>
-on Github. For more in-depth explanation of the API, check out the
-<a href="program_model/">program model</a> section.</p>
-<h2 id="general-conventions">General conventions</h2>
-<p>There are a few conventions that this library follows, and which may be useful
-when orienting yourself in it:</p>
-<ol>
-<li>Every object that wraps a Ghidra object has a <code>.raw</code> property that can be used
-  to get the unwrapped object. So you can always "escape" ghidralib:</li>
-</ol>
-<pre><code class="language-python">&gt;&gt;&gt; Function(&quot;main&quot;).raw.UNKNOWN_STACK_DEPTH_CHANGE
-2147483647
-</code></pre>
-<ol>
-<li>Objects that have an address can be addressed in many different ways - by name,
-  by address, or by Ghidra address object. All of these are equivalent:</li>
-</ol>
-<pre><code class="language-python">Function(&quot;main&quot;)
-Function(0x669d1e)
-Function(toAddr(0x669d1e))
-</code></pre>
-<ol>
-<li>Additionaly, wrappers are "tolerant" and try to drop unnecessary layers.
-  All of these are resolved to the same object:</li>
-</ol>
-<pre><code class="language-python">Instruction(getInstructionAt(toAddr(0x0669d2a)))  # from raw object
-Instruction(0x669d2a)  # from integer
-Instruction(Instruction(0x669d2a))  # wrapped two times
-</code></pre>
-<ol>
-<li>Same goes in the other direction btw - Java API will accept wrappers</li>
-</ol>
-<pre><code class="language-python">getInstructionBefore(getInstructionAt(toAddr(0x0669d2a)))  # pure java
-getInstructionBefore(Instruction(0x0669d2a))  # mixup library object
-</code></pre>
-<ol>
-<li>Many objects expose a static constructor methods, where it makes sense.
-  Possible methods are "get", "create", "all", "create". So for example
-  instead of <code>getAllSymbols()</code> use <code>Symbols.all()</code>.</li>
-</ol>
-<p>The difference between <code>Function.get(addr)</code> and <code>Function(addr)</code> is that
-  <code>Function.get</code> returns <code>None</code> instead of raising an exception when
-  the desired object was not found.</p>
+on Github.</li>
+<li>Read the autogenerated API documentation <a href="reference/">here</a>.</li>
+<li>Check the source code at <a href="https://github.com/msm-code/ghidralib">Github</a></li>
+</ul>
+<p>A fair warning: ghidralib is still actively developed and the API may change
+in the future. But this doesn't matter for your one-off scripts, does it?</p>
               
             </div>
           </div><footer>
     <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
-        <a href="everything/" class="btn btn-neutral float-right" title="Ghidralib">Next <span class="icon icon-circle-arrow-right"></span></a>
+        <a href="getting_started/" class="btn btn-neutral float-right" title="Getting Started">Next <span class="icon icon-circle-arrow-right"></span></a>
     </div>
 
   <hr/>
@@ -170,7 +139,7 @@ getInstructionBefore(Instruction(0x0669d2a))  # mixup library object
     
     
     
-      <span><a href="everything/" style="color: #fcfcfc">Next &raquo;</a></span>
+      <span><a href="getting_started/" style="color: #fcfcfc">Next &raquo;</a></span>
     
   </span>
 </div>

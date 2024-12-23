@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Getting Started - My Project Documentation</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../assets/_mkdocstrings.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Getting Started";
+        var mkdocs_page_input_path = "getting_started.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> My Project Documentation
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Ghidralib</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Getting Started</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#installation">Installation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#main-actors">Main actors</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#function">Function</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#instruction">Instruction</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#basicblock">BasicBlock</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#datatype">DataType</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#symbol">Symbol</a>
+    </li>
+        </ul>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#working-at-various-abstraction-levels">Working at various abstraction levels</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#conventions">Conventions</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">API reference</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">My Project Documentation</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Getting Started</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="getting-started">Getting Started</h1>
+<p>This document contains an introduction to the most important objects
+wrapped by this library, and a few more motivational segments.</p>
+<ul>
+<li><a href="#main-actors">Main Actors</a> - description of the most important
+ghidralib objects</li>
+<li><a href="#working-at-various-abstraction-levels">Working at various abstraction levels</a>
+description of the various abstraction levels wrapped (and made easy!)
+by ghidralib.</li>
+<li><a href="#conventions">Conventions</a> this library follows some design rules.
+They are hopefully intuitive, but understanding them may make your
+first steps easier.</li>
+</ul>
+<h2 id="installation">Installation</h2>
+<p>To use ghidralib, <strong>just drop <a href="https://github.com/msm-code/ghidralib/blob/master/ghidralib.py">this file</a> into your ghidra_scripts directory</strong>.
+Click <a href="https://raw.githubusercontent.com/msm-code/ghidralib/refs/heads/master/ghidralib.py">here</a>
+for a direct download link.</p>
+<h2 id="main-actors">Main actors</h2>
+<h3 id="function">Function</h3>
+<p>Check these usage examples:</p>
+<pre><code class="language-python">from ghidralib import *
+# Get a function at address 0x8ca3f0
+Function(0x8ca3f0)
+
+# Get a function named &quot;main&quot;
+Function(&quot;main&quot;)
+
+# Print all assembly instructions in main function
+for instr in Function(&quot;main&quot;).instructions:
+    print(instr)
+
+# Print all pcode instructions in main function
+for instr in Function(&quot;main&quot;).pcode:
+    print(instr)
+
+# Print all high-level pcode instructions in main function
+# Or you can do it in 100 lines of Java:
+# https://github.com/evm-sec/high-pcode/blob/main/HighPCode.java
+for instr in Function(&quot;main&quot;).high_pcode:
+    print(instr)
+
+# Print all basic blocks in main function
+for block in Function(&quot;main&quot;).basicblocks:
+    print(block)
+
+# Decompile the main function and print the C code.
+print(Function(&quot;main&quot;).decompile())
+
+# Define a function at address 0x400300
+Function.create(0x400300, &quot;main&quot;)
+
+# Print a value of eax and edx at each call of this function
+for call in Function(&quot;MyCustomCrypto&quot;).calls:
+    ctx = call.emulate()
+    key, data = ctx.read_register(&quot;eax&quot;), ctx.read_register(&quot;edx&quot;)
+    print(key, data)
+
+# Print parameters of each call to this function, as seen by
+# the decompiler
+for call in Function(&quot;MyCustomCrypto&quot;).calls:
+    key, data = call.get_args()
+    print(key, data)
+</code></pre>
+<p>Read more in the <a href="../reference/#ghidralib.Function"><code>Function</code> object documentation</a>.</p>
+<h3 id="instruction">Instruction</h3>
+<p>Check these usage examples:</p>
+<pre><code class="language-python"># Get an instruction at address 0x8ca3f0
+Instruction(0x8ca3f0)
+
+# Get the first instruction in main function
+Instruction(&quot;main&quot;)
+
+# Print the instruction mnemonic and operands
+instr = Instruction(0x8ca3f0)
+print(instr.mnemonic, instr.operands)
+
+# Print the instruction pcode:
+for op in instr.pcode:
+    print(op)
+
+# Print the instruction high-level pcode:
+for op in instr.high_pcode:
+    print(op)
+</code></pre>
+<p>Read more in the <a href="../reference/#ghidralib.Instruction"><code>Instruction</code> object documentation</a>.</p>
+<h3 id="basicblock">BasicBlock</h3>
+<p>Check these usage examples:</p>
+<pre><code class="language-python"># TODO: DFS example
+</code></pre>
+<p>Read more in the <a href="../reference/#ghidralib.BasicBlock"><code>BasicBlock</code> object documentation</a>.</p>
+<h3 id="datatype">DataType</h3>
+<p>Check these usage examples:</p>
+<pre><code class="language-python"># Get a datatype called &quot;int&quot;
+DataType(&quot;int&quot;)
+
+# Parse a datatype from C string
+HINTERNET = DataType.from_c('typedef void* HINTERNET;')
+
+# Change a datatype at location
+create_data(0x1234, HINTERNET)
+</code></pre>
+<p>Read more in the <a href="../reference/#ghidralib.DataType"><code>DataType</code> object documentation</a>.</p>
+<h3 id="symbol">Symbol</h3>
+<p>Sometimes called a label. Check these usage examples:</p>
+<pre><code class="language-python"># Get a symbol (label) at address 0x8ca3f0
+Symbol(0x8ca3f0)
+
+# Get a symbol (label) named &quot;main&quot;
+Symbol(&quot;main&quot;)
+
+# Create a label &quot;foo&quot; at address 0x1234
+Symbol.create(0x1234, &quot;foo&quot;)
+
+# Change the symbol's data type
+Symbol(&quot;DAT_1234&quot;).set_type(HINTERNET)
+
+# Print all symbols in the program
+for symbol in Symbol.all():
+    print(symbol)
+
+# Rename all unknown data to something funniner
+for symbol in Symbol.all():
+    if symbol.name.startswith(&quot;DAT_&quot;):
+        symbol.rename(f&quot;funniner_{symbol.name}&quot;)
+</code></pre>
+<p>Read more in the <a href="../reference/#ghidralib.Symbol"><code>Symbol</code> object documentation</a>.</p>
+<h2 id="working-at-various-abstraction-levels">Working at various abstraction levels</h2>
+<p>TODO</p>
+<ul>
+<li><strong>Assembly instructions</strong></li>
+<li><strong>Pcode instructions</strong></li>
+<li><strong>High Pcode instructions</strong></li>
+<li><strong>Pcode AST graph</strong></li>
+<li><strong>Clang tokens</strong></li>
+</ul>
+<h2 id="conventions">Conventions</h2>
+<p>There are a few conventions that this library follows, and which may be useful
+when learning:</p>
+<ul>
+<li>Every object that wraps a Ghidra object has a <code>.raw</code> property that can be used
+  to get the unwrapped object. So you can always "escape" ghidralib:</li>
+</ul>
+<pre><code class="language-python">Function(&quot;main&quot;).raw.UNKNOWN_STACK_DEPTH_CHANGE
+2147483647
+</code></pre>
+<ul>
+<li>Objects that have an address can be addressed in many different ways - by name,
+  by address, or by Ghidra address object. All of these are equivalent:</li>
+</ul>
+<pre><code class="language-python">Function(&quot;main&quot;)
+Function(0x669d1e)
+Function(toAddr(0x669d1e))
+</code></pre>
+<ul>
+<li>Additionaly, wrappers are "tolerant" and try to drop unnecessary layers.
+  All of these are resolved to the same object:</li>
+</ul>
+<pre><code class="language-python">Instruction(getInstructionAt(toAddr(0x0669d2a)))  # from raw object
+Instruction(0x669d2a)  # from integer
+Instruction(Instruction(0x669d2a))  # wrapped two times
+</code></pre>
+<ul>
+<li>Same goes in the other direction btw - Java API will accept wrappers</li>
+</ul>
+<pre><code class="language-python">getInstructionBefore(getInstructionAt(toAddr(0x0669d2a)))  # pure java
+getInstructionBefore(Instruction(0x0669d2a))  # mixup library object
+</code></pre>
+<ul>
+<li>
+<p>Many objects expose a static constructor methods, where it makes sense.
+  Possible methods are "get", "create", "all", "create". So for example
+  instead of <code>getAllSymbols()</code> use <code>Symbols.all()</code>.</p>
+</li>
+<li>
+<p>The difference between <code>Function.get(addr)</code> and <code>Function(addr)</code> is that
+  <code>Function.get</code> returns <code>None</code> instead of raising an exception when
+  the desired object was not found.</p>
+</li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href=".." class="btn btn-neutral float-left" title="Ghidralib"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../reference/" class="btn btn-neutral float-right" title="API reference">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href=".." style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../reference/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
