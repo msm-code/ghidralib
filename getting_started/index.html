@@ -67,6 +67,8 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#conventions">Conventions</a>
     </li>
+    <li class="toctree-l2"><a class="reference internal" href="#ide-configuration">IDE Configuration</a>
+    </li>
     </ul>
                 </li>
               </ul>
@@ -109,6 +111,8 @@ by ghidralib.</li>
 <li><a href="#conventions">Conventions</a> this library follows some design rules.
 They are hopefully intuitive, but understanding them may make your
 first steps easier.</li>
+<li><a href="#ide-configuration">IDE configuration</a> I strongly recommend using
+an IDE that supports type-checking.</li>
 </ul>
 <h2 id="installation">Installation</h2>
 <p>To use ghidralib, <strong>just drop <a href="https://github.com/msm-code/ghidralib/blob/master/ghidralib.py">this file</a> into your ghidra_scripts directory</strong>.
@@ -276,6 +280,22 @@ getInstructionBefore(Instruction(0x0669d2a))  # mixup library object
   the desired object was not found.</p>
 </li>
 </ul>
+<h2 id="ide-configuration">IDE Configuration</h2>
+<p>I strongly recommend using an IDE that supports type-checking. This is why:</p>
+<p><img alt="" src="../typecheck.png" /></p>
+<p>I personally use is VS Code with Python extensions. If you install
+VsCode/VsCodium, a Python extension, and just drop ghidralib.py
+in the ghidra_scripts directory, then everything should "just work".</p>
+<p>If for some reason your script lives in a different directory than
+ghidralib, override the PYTHONPATH so the typechecker knows how to
+import it:</p>
+<pre><code class="language-json">{
+    &quot;python.analysis.extraPaths&quot;: [&quot;/home/you/Projects/ghidralib&quot;],
+    &quot;terminal.integrated.env.windows&quot;: {
+        &quot;PYTHONPATH&quot;: &quot;/home/you/Projects/ghidralib&quot;,
+    }
+}
+</code></pre>
               
             </div>
           </div><footer>
