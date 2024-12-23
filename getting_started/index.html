@@ -5,7 +5,7 @@
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <link rel="shortcut icon" href="../img/favicon.ico" />
-    <title>Getting Started - My Project Documentation</title>
+    <title>Getting Started - Ghidralib</title>
     <link rel="stylesheet" href="../css/theme.css" />
     <link rel="stylesheet" href="../css/theme_extra.css" />
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
@@ -31,7 +31,7 @@
     <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
     <div class="wy-side-scroll">
       <div class="wy-side-nav-search">
-          <a href=".." class="icon icon-home"> My Project Documentation
+          <a href=".." class="icon icon-home"> Ghidralib
         </a><div role="search">
   <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
       <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
@@ -55,8 +55,6 @@
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#instruction">Instruction</a>
     </li>
-    <li class="toctree-l3"><a class="reference internal" href="#basicblock">BasicBlock</a>
-    </li>
     <li class="toctree-l3"><a class="reference internal" href="#datatype">DataType</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#symbol">Symbol</a>
@@ -64,6 +62,14 @@
         </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#working-at-various-abstraction-levels">Working at various abstraction levels</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#random-features">Random features</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#emulation">Emulation</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#graphs">Graphs</a>
+    </li>
+        </ul>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#conventions">Conventions</a>
     </li>
@@ -83,7 +89,7 @@
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
       <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="..">My Project Documentation</a>
+          <a href="..">Ghidralib</a>
         
       </nav>
       <div class="wy-nav-content">
@@ -119,6 +125,13 @@ an IDE that supports type-checking.</li>
 Click <a href="https://raw.githubusercontent.com/msm-code/ghidralib/refs/heads/master/ghidralib.py">here</a>
 for a direct download link.</p>
 <h2 id="main-actors">Main actors</h2>
+<p>A lot of objects are wrapped by this library. The most important at the beginning are:</p>
+<ul>
+<li><a href="#function">Function</a> - a function recognised by Ghidra</li>
+<li><a href="#instruction">Instruction</a> - assembly instruction</li>
+<li><a href="#datatype">DataType</a> - a configured data type</li>
+<li><a href="#symbol">Symbol</a> - a named address (also called a label)</li>
+</ul>
 <h3 id="function">Function</h3>
 <p>Check these usage examples:</p>
 <pre><code class="language-python">from ghidralib import *
@@ -145,6 +158,15 @@ for instr in Function(&quot;main&quot;).high_pcode:
 # Print all basic blocks in main function
 for block in Function(&quot;main&quot;).basicblocks:
     print(block)
+
+# Print high variables in main function
+# These are the variables as seen by decompiler - the ones
+# that one thinks about when reversing
+print(Function(&quot;main&quot;).high_variables)
+
+# Get the control flow graph of the main function...
+# ...and show it! (you can do something more useful instead)
+Function(&quot;main&quot;).control_flow.show()
 
 # Decompile the main function and print the C code.
 print(Function(&quot;main&quot;).decompile())
@@ -186,11 +208,6 @@ for op in instr.high_pcode:
     print(op)
 </code></pre>
 <p>Read more in the <a href="../reference/#ghidralib.Instruction"><code>Instruction</code> object documentation</a>.</p>
-<h3 id="basicblock">BasicBlock</h3>
-<p>Check these usage examples:</p>
-<pre><code class="language-python"># TODO: DFS example
-</code></pre>
-<p>Read more in the <a href="../reference/#ghidralib.BasicBlock"><code>BasicBlock</code> object documentation</a>.</p>
 <h3 id="datatype">DataType</h3>
 <p>Check these usage examples:</p>
 <pre><code class="language-python"># Get a datatype called &quot;int&quot;
@@ -224,21 +241,86 @@ for symbol in Symbol.all():
 # Rename all unknown data to something funniner
 for symbol in Symbol.all():
     if symbol.name.startswith(&quot;DAT_&quot;):
-        symbol.rename(f&quot;funniner_{symbol.name}&quot;)
+        symbol.rename(&quot;funniner_&quot; + symbol.name&quot;)
 </code></pre>
 <p>Read more in the <a href="../reference/#ghidralib.Symbol"><code>Symbol</code> object documentation</a>.</p>
 <h2 id="working-at-various-abstraction-levels">Working at various abstraction levels</h2>
-<p>TODO</p>
+<p>In this section I'll briefly summarize ghidralib objects that you can use to
+work at various abstraction levels.</p>
 <ul>
-<li><strong>Assembly instructions</strong></li>
-<li><strong>Pcode instructions</strong></li>
-<li><strong>High Pcode instructions</strong></li>
-<li><strong>Pcode AST graph</strong></li>
-<li><strong>Clang tokens</strong></li>
+<li>
+<p><strong>Assembly instructions</strong> - at the lowest level, there is assembler.
+You will use familiar <a href="../reference/#ghidralib.Instruction">Instruction</a>,
+<a href="../reference/#ghidralib.BasicBlock">BasicBlock</a> and <a href="../reference/#ghidralib.Function">Function</a>.
+When analysing data, you will think in terms of <a href="../reference/#ghidralib.Register">Register</a>s
+of <a href="../reference/#ghidralib.Variable">Variables</a>, and references are in
+terms of <a href="../reference/#ghidralib.Symbol">Symbols</a>.</p>
+</li>
+<li>
+<p><strong>Pcode instructions</strong> - here you think in terms of <a href="../reference/#ghidralib.PcodeOp">PcodeOp</a>s,
+and <a href="../reference/#ghidralib.PcodeBlock">PcodeBlocks</a>. You still work with
+<a href="../reference/#ghidralib.Function">Functions</a>, but the data flows between
+architecture-independent <a href="../reference/#ghidralib.Varnode">Varnodes</a> now instead.</p>
+</li>
+<li>
+<p><strong>High Pcode instructions</strong> - after the decompilation, many things change.
+You stil work with <a href="../reference/#ghidralib.PcodeOp">PcodeOps</a>, but they are
+significantly transformed - referred as "High Pcode" in this library.
+You now think in terms of <a href="../reference/#ghidralib.HighFunction">High Functions</a>,
+<a href="../reference/#ghidralib.HighVariable">High Variables</a>,
+<a href="../reference/#ghidralib.HighSymbol">High Symbols</a>, and
+<a href="../reference/#ghidralib.HighVarnode">High Varnodes</a>.
+Even <a href="../reference/#ghidralib.Varnode">Varnodes</a> are now slightly more powerful
+(under the hood they are <code>VarnodeASTs</code> now).</p>
+</li>
+<li>
+<p><strong>Pcode syntax tree</strong> (<code>Function.pcode_tree</code>) -
+As far as I know, not many people know how to work with it in Ghidra - though
+ghidralib makes this much easier than it was before. At
+this level, you still have high <a href="../reference/#ghidralib.PcodeOp">PcodeOps</a>, but
+syntactic elements like "dowhile" loops, "if" statements etc, are now recovered
+and you can traverse the syntax tree (while still dealing with
+<a href="../reference/#ghidralib.PcodeOp">PcodeOps</a>).</p>
+</li>
+<li>
+<p>C abstract syntax tree (AST) - not supported by Ghidra. I hope one day
+to find a way to reverse-engineer it, but for now we have to live without it.</p>
+</li>
+<li>
+<p><strong>Clang tokens</strong> (<code>Function.tokens</code>) - a stream of tokens that represent the C code.
+It is very detailed, to the level that it contains even whitespace.
+You can clean them up, but the data is still overprocessed a bit too much,
+and not useful (IMO) during analysis. Ghidra uses it for display.</p>
+</li>
 </ul>
+<h2 id="random-features">Random features</h2>
+<p>I'll showcase a few more random features that you might find useful.</p>
+<h3 id="emulation">Emulation</h3>
+<pre><code class="language-python">emu = Emulator()
+emu.emulate(0x400300, 0x400300 + 0x100)
+print(emu[&quot;eax&quot;])
+print(emu.read_memory(0x401000, 16))
+</code></pre>
+<h3 id="graphs">Graphs</h3>
+<pre><code class="language-python"># Get the control flow graph of the main function (and display it)
+Function(&quot;main&quot;).control_flow.show()
+
+def callback(func):
+    print(&quot;visiting&quot;, func)
+
+# Traverse the call graph of the program, while calling the callback
+Program.call_graph.dfs(callback)
+</code></pre>
 <h2 id="conventions">Conventions</h2>
 <p>There are a few conventions that this library follows, and which may be useful
 when learning:</p>
+<ul>
+<li>This library completely ignores the Ghidra "Address" abstraction. Plain integers
+are used everywhere instead. Address abstraction is very powerful, but not
+necessary for most use cases (at least my use cases).</li>
+</ul>
+<p>If this is a problem for you, please let me know - maybe there is a simple way
+to make ghidralib work for you.</p>
 <ul>
 <li>Every object that wraps a Ghidra object has a <code>.raw</code> property that can be used
   to get the unwrapped object. So you can always "escape" ghidralib:</li>
