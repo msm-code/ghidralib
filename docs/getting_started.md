@@ -22,6 +22,13 @@ for a direct download link.
 
 ## Main actors
 
+A lot of objects are wrapped by this library. The most important at the beginning are:
+
+* [Function](#function) - a function recognised by Ghidra
+* [Instruction](#instruction) - assembly instruction
+* [DataType](#datatype) - a configured data type
+* [Symbol](#symbol) - a named address (also called a label)
+
 ### Function
 
 Check these usage examples:
@@ -51,6 +58,15 @@ for instr in Function("main").high_pcode:
 # Print all basic blocks in main function
 for block in Function("main").basicblocks:
     print(block)
+
+# Print high variables in main function
+# These are the variables as seen by decompiler - the ones
+# that one thinks about when reversing
+print(Function("main").high_variables)
+
+# Get the control flow graph of the main function...
+# ...and show it! (you can do something more useful instead)
+Function("main").control_flow.show()
 
 # Decompile the main function and print the C code.
 print(Function("main").decompile())
@@ -99,16 +115,6 @@ for op in instr.high_pcode:
 
 Read more in the [`Instruction` object documentation](reference.md#ghidralib.Instruction).
 
-### BasicBlock
-
-Check these usage examples:
-
-```python
-# TODO: DFS example
-```
-
-Read more in the [`BasicBlock` object documentation](reference.md#ghidralib.BasicBlock).
-
 ### DataType
 
 Check these usage examples:
@@ -150,25 +156,91 @@ for symbol in Symbol.all():
 # Rename all unknown data to something funniner
 for symbol in Symbol.all():
     if symbol.name.startswith("DAT_"):
-        symbol.rename(f"funniner_{symbol.name}")
+        symbol.rename("funniner_" + symbol.name")
 ```
 
 Read more in the [`Symbol` object documentation](reference.md#ghidralib.Symbol).
 
 ## Working at various abstraction levels
 
-TODO
+In this section I'll briefly summarize ghidralib objects that you can use to
+work at various abstraction levels.
 
-* **Assembly instructions**
-* **Pcode instructions**
-* **High Pcode instructions**
-* **Pcode AST graph**
-* **Clang tokens**
+* **Assembly instructions** - at the lowest level, there is assembler.
+You will use familiar [Instruction](reference.md#ghidralib.Instruction),
+[BasicBlock](reference.md#ghidralib.BasicBlock) and [Function](reference.md#ghidralib.Function).
+When analysing data, you will think in terms of [Register](reference.md#ghidralib.Register)s
+of [Variables](reference.md#ghidralib.Variable), and references are in
+terms of [Symbols](reference.md#ghidralib.Symbol).
+
+* **Pcode instructions** - here you think in terms of [PcodeOp](reference.md#ghidralib.PcodeOp)s,
+and [PcodeBlocks](reference.md#ghidralib.PcodeBlock). You still work with
+[Functions](reference.md#ghidralib.Function), but the data flows between
+architecture-independent [Varnodes](reference.md#ghidralib.Varnode) now instead.
+
+* **High Pcode instructions** - after the decompilation, many things change.
+You stil work with [PcodeOps](reference.md#ghidralib.PcodeOp), but they are
+significantly transformed - referred as "High Pcode" in this library.
+You now think in terms of [High Functions](reference.md#ghidralib.HighFunction),
+[High Variables](reference.md#ghidralib.HighVariable),
+[High Symbols](reference.md#ghidralib.HighSymbol), and
+[High Varnodes](reference.md#ghidralib.HighVarnode).
+Even [Varnodes](reference.md#ghidralib.Varnode) are now slightly more powerful
+(under the hood they are `VarnodeASTs` now).
+
+* **Pcode syntax tree** (`Function.pcode_tree`) -
+As far as I know, not many people know how to work with it in Ghidra - though
+ghidralib makes this much easier than it was before. At
+this level, you still have high [PcodeOps](reference.md#ghidralib.PcodeOp), but
+syntactic elements like "dowhile" loops, "if" statements etc, are now recovered
+and you can traverse the syntax tree (while still dealing with
+[PcodeOps](reference.md#ghidralib.PcodeOp)).
+
+* C abstract syntax tree (AST) - not supported by Ghidra. I hope one day
+to find a way to reverse-engineer it, but for now we have to live without it.
+
+* **Clang tokens** (`Function.tokens`) - a stream of tokens that represent the C code.
+It is very detailed, to the level that it contains even whitespace.
+You can clean them up, but the data is still overprocessed a bit too much,
+and not useful (IMO) during analysis. Ghidra uses it for display.
+
+## Random features
+
+I'll showcase a few more random features that you might find useful.
+
+### Emulation
+
+```python
+emu = Emulator()
+emu.emulate(0x400300, 0x400300 + 0x100)
+print(emu["eax"])
+print(emu.read_memory(0x401000, 16))
+```
+
+### Graphs
+
+```python
+# Get the control flow graph of the main function (and display it)
+Function("main").control_flow.show()
+
+def callback(func):
+    print("visiting", func)
+
+# Traverse the call graph of the program, while calling the callback
+Program.call_graph.dfs(callback)
+```
 
 ## Conventions
 
 There are a few conventions that this library follows, and which may be useful
 when learning:
+
+* This library completely ignores the Ghidra "Address" abstraction. Plain integers
+are used everywhere instead. Address abstraction is very powerful, but not
+necessary for most use cases (at least my use cases).
+
+If this is a problem for you, please let me know - maybe there is a simple way
+to make ghidralib work for you.
 
 * Every object that wraps a Ghidra object has a `.raw` property that can be used
   to get the unwrapped object. So you can always "escape" ghidralib:

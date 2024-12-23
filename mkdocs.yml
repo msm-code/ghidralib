@@ -1,4 +1,4 @@
-site_name: My Project Documentation
+site_name: Ghidralib
 theme: readthedocs
 plugins:
   - search
