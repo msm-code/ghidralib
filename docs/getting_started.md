@@ -222,11 +222,30 @@ print(emu.read_memory(0x401000, 16))
 ```python
 # Get the control flow graph of the main function (and display it)
 Function("main").control_flow.show()
+```
 
+Graph visualisation is not the most useful feature of this library, but it
+looks cool:
+
+![](./graph.png)
+
+And you can easily build the graph yourself:
+
+```python
+g = Graph.create()
+foo = g.vertex("foo")
+bar = g.vertex("bar")
+g.edge(foo, bar)
+g.show()
+```
+
+Or do some actually useful stuff with graph algorithms:
+
+```python
 def callback(func):
     print("visiting", func)
 
-# Traverse the call graph of the program, while calling the callback
+# Traverse the program functions in topological order, and print the function names.
 Program.call_graph.dfs(callback)
 ```
 
