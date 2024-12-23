@@ -254,7 +254,7 @@ class Graph(GenericT, GhidraWrapper):
         We have to keep track of additional data, since AttributedGraph is a bit
         clunky and can only store string IDs and string values.
 
-        :param: The AttributedGraph object to wrap."""
+        :param raw: The AttributedGraph object to wrap."""
         GhidraWrapper.__init__(self, raw)
         self.data = {}
 
@@ -275,7 +275,7 @@ class Graph(GenericT, GhidraWrapper):
     def __contains__(self, vtx):  # type: (T) -> bool
         """Check if a vertex with the given ID exists in this graph.
 
-        :param id: The ID of the vertex to check."""
+        :param vtx: The ID of the vertex to check."""
         vid = get_unique_string(vtx)
         vobj = self.raw.getVertex(vid)
         return self.raw.containsVertex(vobj)
@@ -283,22 +283,22 @@ class Graph(GenericT, GhidraWrapper):
     def has_vertex(self, vtx):  # type: (T) -> bool
         """Check if a vertex with the given ID exists in this graph.
 
-        :param id: The ID of the vertex to check."""
+        :param vtx: The ID of the vertex to check."""
         return vtx in self
 
-    def vertex(self, vtx, name=None):  # type: (T, str|None) -> str
+    def vertex(self, vtx, name=None):  # type: (T, str|None) -> T
         """Get or create a vertex in this graph.
 
-        :param id: The ID of the new vertex, or any "Vertexable" object
+        :param vtx: The ID of the new vertex, or any "Vertexable" object
         that can be used to identify the vertex.
         :param name: The name of the vertex. If not provided,
         the ID will be used as the name.
-        :returns: the id parameter"""
+        :returns: vtx parameter is returned"""
         vid = get_unique_string(vtx)
         name = name or vid
         self.raw.addVertex(vid, name)
         self.data[vid] = vtx
-        return vid
+        return vtx
 
     def edge(self, src, dst):  # type: (T, T) -> None
         """Create an edge between two vertices in this graph.
@@ -1084,7 +1084,7 @@ class Instruction(GhidraWrapper):
 
         More specifically, this will convert constants and addresses into integers,
         and for registers the name will be returned."""
-        raise RuntimeError("TODO")
+        return [self.operand(i) for i in range(self.raw.getNumOperands())]
 
     @property
     def flow(self):  # type: () -> RefType
@@ -1956,7 +1956,7 @@ class DataType(GhidraWrapper):
             >>> DataType.get("int")
             int
 
-        :param name: the name of the data type
+        :param name_or_raw: the name of the data type
         :return: the data type, or None if not found"""
         if not isinstance(name_or_raw, Str):
             return DataType(name_or_raw)
