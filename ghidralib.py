@@ -6,15 +6,15 @@ The main goal is to make writing quick&dirty scripts actually quick, and not tha
 There is no equivalent of FlatProgramAPI from GHidra. You are expected to start
 by getting an object of interest by calling instance methods, for example
 
-  >>> Function("main")
-  main
+    >>> Function("main")
+    main
 
 to get a function called "main". When you want to do something this library
 doesn't support (yet), you can always excape back to Ghidra's wrapped Java
 types, by getting a `.raw` property, for example:
 
-  >>> Function("main").raw.UNKNOWN_STACK_DEPTH_CHANGE
-  2147483647
+    >>> Function("main").raw.UNKNOWN_STACK_DEPTH_CHANGE
+    2147483647
 
 For more details, see the documentation at https://msm-code.github.io/ghidralib/.
 """
@@ -31,6 +31,8 @@ from ghidra.program.model.pcode import BlockGraph as GhBlockGraph, BlockCopy
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
 from ghidra.program.model.address import GenericAddress
 from ghidra.program.model.symbol import RefType as GhRefType
+from ghidra.app.decompiler import ClangTokenGroup as GhClangTokenGroup
+from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak
 from ghidra.app.emulator import EmulatorHelper
 from __main__ import (
     toAddr,
@@ -56,8 +58,11 @@ except ImportError:
 
 
 class JavaObject:
+    """A fake class, used for static type hints."""
+
     def __getattribute__(self, name):  # type: (str) -> Any
-        pass  # this class exists just for static typing
+        """This attribute exists to make mypy happy."""
+        pass
 
 
 # Aliases just for typechecking.
@@ -79,6 +84,7 @@ if TYPE_CHECKING:
 
 
 def collect_iterator(iterator):
+    """Collect a Java iterator to a Python list."""
     result = []
     while iterator.hasNext():
         result.append(iterator.next())
@@ -86,6 +92,28 @@ def collect_iterator(iterator):
 
 
 def resolve(addr):  # type: (Addr) -> GenericAddress
+    """Convert an arbitrary addressable value to a Ghidra Address object.
+
+    This library accepts one of three things as addressses:
+
+    1. A Ghidra Address object
+    2. An integer representing an address
+    3. A string representing a symbol name
+
+    This function is responsible from converting the addressable values (`Addr`)
+    to Ghidra addresses (`GenericAddress`).
+
+        >>> resolve(0x1234)
+        0x1234
+        >>> resolve(Symbol("main"))
+        0x1234
+        >>> resolve(toAddr(0x1234))
+        0x1234
+
+    :param addr: An addressable value.
+    :return: A GenericAddress object representing the passed address.
+
+    """
     if isinstance(addr, GenericAddress):
         return addr
     if isinstance(addr, (int, long)):
@@ -96,11 +124,21 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
     raise TypeError("Address must be a ghidra Address, int, or str")
 
 
+def resolve_to_int(addr):  # type: (Addr) -> int
+    """Convert an addressable value to an integer representation."""
+    return resolve(addr).getOffset()
+
+
 def can_resolve(addr):  # type: (Addr) -> bool
+    """Check if a passed value address can be resolved.
+
+    This is useful for checking if `resolve()` will succeed.
+    See `resolve` documentation for more details."""
     return isinstance(addr, (GenericAddress, int, long, str))
 
 
 def unwrap(wrapper_or_java_type):  # type: (JavaObject|GhidraWrapper) -> JavaObject
+    "If the argument is a GhidraWrapper, return the underlying Java object." ""
     if isinstance(wrapper_or_java_type, GhidraWrapper):
         return wrapper_or_java_type.raw
     return wrapper_or_java_type
@@ -109,12 +147,28 @@ def unwrap(wrapper_or_java_type):  # type: (JavaObject|GhidraWrapper) -> JavaObj
 def _as_javaobject(raw):  # type: (Any) -> JavaObject
     """Ensure the object is actually a Java object, and return it.
 
-    This exists also to make a type-checker happy"""
+    This function exists mostly to make a type-checker happy"""
     assert hasattr(raw, "__class__")
     return raw
 
 
 class GhidraWrapper:
+    """The base class for all Ghidra wrappers.
+
+    This function tries to be as transparent as possible - for example, it will
+    not raise an error on double-wrapping, or when passed instead of a
+    Java type.
+
+        >>> instr = getInstructionAt(getAddr(0x1234))
+        >>> GhidraWrapper(instr)
+        <Instruction 0x1234>
+        >>> GhidraWrapper(GhidraWrapper(instr))
+        <Instruction 0x1234>
+        >>> getInstructionBefore(Instruction(instr))
+        <Instruction 0x1233>
+
+    Similarly, equality is based on the underlying Java object."""
+
     def __init__(self, raw):  # type: (JavaObject|int|long|str|GhidraWrapper) -> None
         if isinstance(raw, (int, long, str)):
             # Someone passed a primitive type to us.
@@ -162,10 +216,10 @@ class HighVariable(GhidraWrapper):
 
 
 class HighSymbol(GhidraWrapper):
-    def rename(self, new_name):  # type: (str) -> None
-        HighFunctionDBUtil.updateDBVariable(
-            self.raw, new_name, None, SourceType.USER_DEFINED
-        )
+    def rename(
+        self, new_name, source=SourceType.USER_DEFINED
+    ):  # type: (str, SourceType) -> None
+        HighFunctionDBUtil.updateDBVariable(self.raw, new_name, None, source)
 
 
 class Register(GhidraWrapper):
@@ -272,7 +326,7 @@ class PcodeOp(GhidraWrapper):
     possible operations.
 
     While Ghidra doesn't define "High Pcode", this library refers
-    to analysed Pcode as "High PCode". While theoretically still
+    to analysed Pcode as "High Pcode". While theoretically still
     the same object, Pcode is transformed significantly, for example
     before function parameter analysis "CALL" opcodes have no inputs.
     """
@@ -416,7 +470,11 @@ class PcodeBlock(GhidraWrapper):
         return [_pcode_node(self.raw.getIn(i)) for i in range(self.raw.getInSize())]
 
     @property
-    def is_graph(self):  # type: () -> bool
+    def has_children(self):  # type: () -> bool
+        """Returns True if this block has any children and can be iterated over.
+
+        This function is necessary because Ghidra's code uses isinstance()
+        checks to dispatch types. We return true for instances of Java BlockGraph."""
         return isinstance(self.raw, GhBlockGraph)
 
     @property
@@ -444,7 +502,7 @@ class HighFunction(GhidraWrapper):
     def basic_blocks(self):  # type: () -> list[PcodeBlock]
         return [PcodeBlock(raw) for raw in self.raw.getBasicBlocks()]
 
-    def get_ast(self):  # type: () -> BlockGraph
+    def get_pcode_tree(self):  # type: () -> BlockGraph
         edge_map = {}
         ingraph = GhBlockGraph()
         for block in self.basic_blocks:
@@ -466,22 +524,27 @@ class HighFunction(GhidraWrapper):
 class Reference(GhidraWrapper):
     @property
     def is_call(self):  # type: () -> bool
+        """Return True if the reference is a call."""
         return self.reftype.is_call
 
     @property
     def is_jump(self):  # type: () -> bool
+        """Return True if the reference is a jump."""
         return self.reftype.is_jump
 
     @property
     def reftype(self):  # type: () -> RefType
+        """Return the type of reference."""
         return RefType(self.raw.getReferenceType())
 
     @property
     def from_address(self):  # type: () -> int
+        """Return the address of the source of the reference."""
         return self.raw.getFromAddress().getOffset()
 
     @property
     def to_address(self):  # type: () -> int
+        """Return the address of the target of the reference."""
         return self.raw.getToAddress().getOffset()
 
     # @property
@@ -612,7 +675,10 @@ RefType.CALLOTHER_OVERRIDE_JUMP = RefType(GhRefType.CALLOTHER_OVERRIDE_JUMP)
 
 
 class Instruction(GhidraWrapper):
+    """Wraps a Ghidra Instruction object"""
+
     def get(self, raw_or_address):  # type: (JavaObject|Addr) -> Instruction
+        """Get an instruction at an address, or None if not found."""
         if can_resolve(raw_or_address):
             raw = getInstructionAt(resolve(raw_or_address))
         else:
@@ -621,14 +687,17 @@ class Instruction(GhidraWrapper):
 
     @property
     def mnemonic(self):  # type: () -> str
+        """Get the mnemonic of this instruction."""
         return self.raw.getMnemonicString()
 
     @property
     def next(self):  # type: () -> Instruction
+        """ ""Get the next instruction."""
         return Instruction(self.raw.getNext())
 
     @property
     def previous(self):  # type: () -> Instruction
+        """Get the previous instruction."""
         return Instruction(self.raw.getPrevious())
 
     @property
@@ -645,33 +714,66 @@ class Instruction(GhidraWrapper):
 
     @property
     def xrefs_from(self):  # type: () -> list[Reference]
+        """Get a list of references that point to this instruction."""
         return [Reference(raw) for raw in self.raw.getReferencesFrom()]
 
     def to_bytes(self):  # type: () -> bytes
+        """Get the bytes of this instruction."""
         return self.raw.getBytes()
 
-    def get_scalar(self, ndx):  # type: (int) -> int
+    def operand(self, ndx):  # type: (int) -> int
+        """ "Get the nth operand of this instruction as a scalar."""
         scalar = self.raw.getScalar(ndx)
         if scalar:
             return scalar.getValue()
         addr = self.raw.getAddress(ndx)
         if addr:
             return addr.getOffset()
+        reg = self.raw.getRegister(ndx)
+        if reg:
+            return reg.getName()
         obj = addr.getOpObjects(ndx)
-        raise RuntimeError("Can't convert operand {} to scalar", obj)
+        raise RuntimeError("Don't know how to read operand {}", obj)
+
+    def scalar(self, ndx):  # type: (int) -> int
+        """Get the nth operand of this instruction as a scalar."""
+        out = self.operand(ndx)
+        if not isinstance(out, int):
+            raise RuntimeError("Operand {} is not a scalar".format(ndx))
+        return out
+
+    def register(self, ndx):  # type: (int) -> str
+        """Get the nth operand of this instruction as a register name."""
+        out = self.operand(ndx)
+        if not isinstance(out, str):
+            raise RuntimeError("Operand {} is not a register".format(ndx))
+        return out
 
     @property
     def address(self):  # type: () -> int
-        return self.raw.getAddress()
+        """Get the address of this instruction."""
+        return self.raw.getAddress().getOffset()
+
+    @property
+    def operands(self):  # type: () -> list[int|str]
+        """Return operands as primitive values (int or a string representation).
+
+        More specifically, this will convert constants and addresses into integers,
+        and for registers the name will be returned."""
+        raise RuntimeError("TODO")
 
     @property
     def flow(self):  # type: () -> RefType
+        """ "Get the flow type of this instruction.
+
+        For example, for x86 JMP this will return RefType.UNCONDITIONAL_JUMP"""
         return RefType(self.raw.getFlowType())
 
     # int opIndex, Address refAddr, RefType type, SourceType sourceType
     def add_operand_reference(
         self, op_ndx, ref_addr, ref_type, src_type
     ):  # type: (int, Addr, RefType, SourceType) -> None
+        """Add a reference to an operand of this instruction."""
         # TODO: wrap SourceType too, someday?
         self.raw.addOperandReference(op_ndx, resolve(ref_addr), ref_type.raw, src_type)
 
@@ -738,62 +840,88 @@ class BasicBlock(GhidraWrapper):
 
 
 class Variable(GhidraWrapper):
+    """Wraps a Ghidra Variable object"""
+
     @property
     def name(self):  # type: () -> str
+        """Get the name of this variable"""
         return self.raw.getName()
 
     @property
     def data_type(self):  # type: () -> DataType
+        """Get the data type of this variable"""
         return DataType(self.raw.getDataType())
 
     @property
     def is_valid(self):  # type: () -> bool
+        """Check if this variable is valid"""
         return self.raw.isValid()
 
     @property
     def comment(self):  # type: () -> str
+        """ ""Get the comment for this variable"""
         return self.raw.getComment()
 
     def set_comment(self, comment):  # type: (str) -> None
+        """Set the comment for this variable"""
         self.raw.setComment(comment)
 
     @property
     def is_stack(self):  # type: () -> bool
+        """Check if this variable is a stack variable"""
         return self.raw.isStackVariable()
 
     @property
     def is_memory(self):  # type: () -> bool
+        """Check if this variable is stored in memory"""
         return self.raw.isMemoryVariable()
 
     @property
     def is_unique(self):  # type: () -> bool
+        """Check if this variable is of type unique"""
         return self.raw.isUniqueVariable()
 
     @property
     def is_compound(self):  # type: () -> bool
+        """Check if this variable is a compound variable"""
         return self.raw.isCompoundVariable()
 
     @property
     def symbol(self):  # type: () -> Symbol
+        """ ""Get the symbol for this variable"""
         return Symbol(self.raw.getSymbol())
 
 
 class Parameter(Variable):
+    """Wraps a Ghidra Parameter object."""
+
     @property
     def ordinal(self):  # type: () -> int
+        """Returns the ordinal of this parameter."""
         return self.raw.getOrdinal()
 
     @property
     def formal_data_type(self):  # type: () -> DataType
+        """Returns the formal data type of this parameter."""
         return DataType(self.raw.getFormalDataType())
 
 
 class FunctionCall:
+    """Represents an abstract function call.
+
+    Can be used to get the function being called and the parameters passed to it."""
+
     def __init__(self, function, address):  # type: (Function, Addr) -> None
         self.function = function
         self.address = resolve(address)
 
     def get_high_pcode(self):  # type: () -> PcodeOp
+        """Get the high-level PcodeOp for this function call.
+
+        High-level Pcode `call` ops have the parameters resolved, so we
+        can use them to read them when analysing Pcode.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
         for pcode_op in PcodeOp.get_high_pcode_at(self.address):
             if pcode_op.opcode != pcode_op.CALL:
                 continue
@@ -802,21 +930,34 @@ class FunctionCall:
         raise RuntimeError("No CALL at {}".format(hex(self.address)))
 
     def get_varnodes(self):  # type: () -> dict[Varnode, int]
+        """Single-step the current basic block in the emulator, and trace the varnodes
+
+        This will return a dictionary of varnodes and their values."""
+
         basicblock = BasicBlock(self.address)
         emu = Emulator()
         return emu.propagate_varnodes(basicblock.start_address, self.address)
 
     def emulate(self):  # type: () -> Emulator
+        """Emulate the basic block of this function call, and return the state"""
         basicblock = BasicBlock(self.address)
         emu = Emulator()
         emu.emulate(basicblock.start_address, self.address)
         return emu
 
     def get_args_as_varnodes(self):  # type: () -> list[Varnode]
+        """Get a list of the arguments passed to this function call, as varnodes.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
         pcode_op = self.get_high_pcode()
         return pcode_op.inputs[1:]  # skip function addr
 
-    def get_args(self, emulate=True):  # type: (bool) -> list[int]
+    def get_args(self, emulate=True):  # type: (bool) -> list[int|None]
+        """Get a list of the arguments passed to this function call, as integers.
+
+        This method gets arguments of this function, as seen by Ghidra decompiler.
+        If it's not possible to get an argument, return None in its place.
+        Warning: this method needs to decompile the function, and is therefore slow."""
         basicblock = BasicBlock(self.address)
 
         state = {}
@@ -838,9 +979,49 @@ class FunctionCall:
         return args
 
 
+class ClangTokenGroup(GhidraWrapper):
+    """Represents a group of clang tokens from a decompiler.
+
+    Warning: Currently this class is experimental, and should not be relied upon,
+    except to get the Java object (with .raw) or maybe dump (.dump())."""
+
+    def _cleanup(self, token):  # type: (JavaObject) -> JavaObject
+        new = GhClangTokenGroup(token.Parent())
+        for token in list(token.iterator()):
+            if isinstance(token, (ClangCommentToken, ClangBreak)):
+                continue
+            if isinstance(token, ClangSyntaxToken):
+                if not token.getText() or token.getText().isspace():
+                    continue
+            if isinstance(token, GhClangTokenGroup):
+                token = self._cleanup(token)
+            new.AddTokenGroup(token)
+        return new
+
+    @property
+    def cleaned(self):  # type: () -> ClangTokenGroup
+        """Remove all whitespace and comments from this token group, recursively."""
+        return ClangTokenGroup(self._cleanup(self.raw))
+
+    def _dump(self, token, indent=0):  # type: (JavaObject, int) -> None
+        if isinstance(token, GhClangTokenGroup):
+            print("{}[group]".format(indent * "  ", token.__class__.__name__))
+            for child in token.iterator():
+                self._dump(child, indent + 1)
+        else:
+            print("{}{} ({})".format(indent * "  ", token, token.__class__.__name__))
+
+    def dump(self):  # type: () -> None
+        self._dump(self.raw)
+
+
 class Function(GhidraWrapper):
+    """Wraps a Ghidra Function object."""
+
     @staticmethod
     def get(addr):  # type: (Addr|JavaObject) -> Function|None
+        """Return a function at the given address, or None if no function
+        exists there."""
         raw = currentProgram.getListing().getFunctionContaining(resolve(addr))
         if raw is None:
             return None
@@ -848,106 +1029,133 @@ class Function(GhidraWrapper):
 
     @staticmethod
     def all():  # type: () -> list[Function]
+        """Return all functions in the current program."""
         raw_functions = currentProgram.getFunctionManager().getFunctions(True)
         return [Function(f) for f in raw_functions]
 
     @staticmethod
     def create(address, name):  # type: (Addr, str) -> Function
+        """Create a new function at the given address with the given name."""
         func = createFunction(resolve(address), name)
         return Function(func)
 
     @property
     def return_type(self):  # type: () -> DataType
+        """Get the return type of this function."""
         return DataType(self.raw.getReturnType())
 
     @property
     def return_variable(self):  # type: () -> Parameter
+        """Get the variable representing a return value of this function."""
         return Parameter(self.raw.getReturn())
 
     @property
     def entrypoint(self):  # type: () -> int
+        """Get the entrypoint of this function."""
         return self.raw.getEntryPoint().getOffset()
 
     @property
     def address(self):  # type: () -> int
+        """Get the address of this function."""
         return self.entrypoint
 
     @property
     def name(self):  # type: () -> str
+        """Get the name of this function."""
         return self.raw.getName()
 
     @property
     def comment(self):  # type: () -> str
+        """Get the comment of this function, if any."""
         return self.raw.getComment()
 
     def set_comment(self, comment):  # type: (str) -> None
+        """Set the comment of this function."""
         self.raw.setComment(comment)
 
     @property
     def is_thunk(self):  # type: () -> bool
+        """Return True if this function is a thunk."""
         return self.raw.isThunk()
 
     @property
     def is_external(self):  # type: () -> bool
+        """Return True if this function is external."""
         return self.raw.isExternal()
 
     @property
     def repeatable_comment(self):  # type: () -> str
+        """Get the repeatable comment of this function, if any."""
         return self.raw.getRepeatableComment()
 
     def set_repeatable_comment(self, comment):  # type: (str) -> None
+        """Set the repeatable comment of this function."""
         self.raw.setRepeatableComment(comment)
 
     @property
     def parameters(self):  # type: () -> list[Parameter]
+        """ "Get the parameters of this function."""
         return [Parameter(raw) for raw in self.raw.getParameters()]
 
     @property
     def local_variables(self):  # type: () -> list[Variable]
+        """ "Get the local variables of this function."""
         return [Variable(raw) for raw in self.raw.getLocalVariables()]
 
     @property
     def variables(self):  # type: () -> list[Variable]
+        """Get all variables defined in this function."""
         return [Variable(raw) for raw in self.raw.getAllVariables()]
 
     def rename(self, name):  # type: (str) -> None
+        """Change the name of this function."""
         self.raw.setName(name, SourceType.USER_DEFINED)
 
     @property
     def instructions(self):  # type: () -> list[Instruction]
+        """Get the assembler instructions for this function."""
         listing = currentProgram.getListing()
         raw_instructions = listing.getInstructions(self.raw.getBody(), True)
         return [Instruction(raw) for raw in raw_instructions]
 
     @property
     def xrefs(self):  # type: () -> list[Reference]
+        """Get the references to this function."""
         raw_refs = getReferencesTo(resolve(self.entrypoint))
         return [Reference(raw) for raw in raw_refs]
 
     @property
     def xref_addrs(self):  # type: () -> list[int]
+        """Get the source addresses of references to this function."""
         return [xref.from_address for xref in self.xrefs]
 
     @property
     def callers(self):  # type: () -> list[Function]
+        """Get all functions that call this function."""
         return [
             Function(raw) for raw in self.raw.getCallingFunctions(TaskMonitor.DUMMY)
         ]
 
     @property
     def called(self):  # type: () -> list[Function]
+        """Get all functions that are called by this function."""
         return [Function(raw) for raw in self.raw.getCalledFunctions(TaskMonitor.DUMMY)]
 
     @property
     def fixup(self):  # type: () -> str
+        """ "Get the fixup of this function."""
         return self.raw.getFixup()
 
     @fixup.setter
     def fixup(self, fixup):  # type: (str) -> None
+        """Set the fixup of this function.
+
+        :param fixup: The new fixup to set."""
         self.raw.setFixup(fixup)
 
     @property
     def calls(self):  # type: () -> list[FunctionCall]
+        """ "Get all function calls to this function."""
         calls = []
         for ref in self.xrefs:
             if ref.is_call:
@@ -956,6 +1164,7 @@ class Function(GhidraWrapper):
 
     @property
     def basicblocks(self):  # type: () -> list[BasicBlock]
+        """Get the basic blocks of this function."""
         block_model = BasicBlockModel(currentProgram)
         blocks = block_model.getCodeBlocksContaining(
             self.raw.getBody(), TaskMonitor.DUMMY
@@ -963,6 +1172,7 @@ class Function(GhidraWrapper):
         return [BasicBlock(block) for block in blocks]
 
     def _decompile(self, simplify="decompile"):  # type: (str) -> JavaObject
+        """Decompile this function (internal helper)."""
         decompiler = DecompInterface()
         decompiler.openProgram(currentProgram)
         decompiler.setSimplificationStyle(simplify)
@@ -974,77 +1184,181 @@ class Function(GhidraWrapper):
         return decompiled
 
     def decompile(self):  # type: () -> str
+        """Get decompiled C code for the function as string."""
         decompiled = self._decompile()
         return decompiled.getDecompiledFunction().getC()
 
+    def tokens(self):  # type: () -> ClangTokenGroup
+        """Get clang tokens for the decompiled function.
+
+        This returns a ClangTokenGroup object. TODO: wrap the return value."""
+        decompiled = self._decompile()
+        return ClangTokenGroup(decompiled.getCCodeMarkup())
+
+    @property
+    def high_function(self):  # type: () -> HighFunction
+        """Decompile this function, and return a high-level function.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
+        return self.get_high_function()
+
     def get_high_function(self, simplify="decompile"):  # type: (str) -> HighFunction
+        """Decompile this function, and return a high-level function.
+
+        Warning: this method needs to decompile the function, and is therefore slow.
+
+        :simplify: the simplification style to use.
+        See DecompilerInterface.setSimplificationStyle."""
         decompiled = self._decompile(simplify)
         return HighFunction(decompiled.getHighFunction())
 
     def get_high_pcode(self, simplify="decompile"):  # type: (str) -> list[PcodeOp]
+        """ "Decompile this function, and return its high-level Pcode.
+
+        Warning: this method needs to decompile the function, and is therefore slow.
+
+        :simplify: the simplification style to use.
+        See DecompilerInterface.setSimplificationStyle."""
         return self.get_high_function(simplify).pcode
 
     @property
+    def pcode_tree(self):  # type: () -> BlockGraph
+        """ "Get an AST-like representation of the function's Pcode.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
+        return self.get_pcode_tree()
+
+    def get_pcode_tree(self):  # type: () -> BlockGraph
+        """ "Get an AST-like representation of the function's Pcode.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
+        return self.get_high_function().get_pcode_tree()
+
+    @property
+    def pcode(self):  # type: () -> list[PcodeOp]
+        """ "Get the (low-level) Pcode for this function."""
+        result = []
+        for block in self.basicblocks:
+            result.extend(block.pcode)
+        return result
+
+    @property
     def high_pcode(self):  # type: () -> list[PcodeOp]
+        """Get the (high-level) Pcode for this function.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
         return self.get_high_pcode()
 
     def get_high_pcode_at(self, address):  # type: (Addr) -> list[PcodeOp]
+        """Get the high-level Pcode at the given address.
+
+        Do not use this function in a loop! Better decompile the whole function first.
+
+        Warning: this method needs to decompile the function, and is therefore slow.
+
+        :param address: the address to get the Pcode for."""
         return self.get_high_function().get_pcode_at(address)
 
 
 class Symbol(GhidraWrapper):
+    """Wraps a Ghidra Symbol object."""
+
     @staticmethod
-    def get(raw_or_name):  # type: (JavaObject|str|Addr) -> Symbol
+    def get(raw_or_name):  # type: (JavaObject|str|Addr) -> Symbol|None
+        """Get a symbol with the provided name or at the provided address.
+
+        Return None if the symbol was not found.
+
+        :param raw_or_name: a Ghidra Java object, a string, or an address."""
         if isinstance(raw_or_name, str):
             symbol_iterator = currentProgram.getSymbolTable().getSymbols(raw_or_name)
             symbols = collect_iterator(symbol_iterator)
             if not symbols:
-                raise RuntimeError("Symbol {} not found".format(raw_or_name))
+                return None
             raw = symbols[0]
         elif can_resolve(raw_or_name):
             raw = currentProgram.getSymbolTable().getPrimarySymbol(resolve(raw_or_name))
+            if not raw:
+                return None
         else:
             raw = raw_or_name
         return Symbol(raw)
 
     @staticmethod
     def all():  # type: () -> list[Symbol]
+        """Get all symbols."""
         symbol_iterator = currentProgram.getSymbolTable().getAllSymbols()
         symbols = collect_iterator(symbol_iterator)
         return [Symbol(s) for s in symbols]
 
     @staticmethod
-    def create(address, name):  # type: (Addr, str) -> Symbol
-        raw = createLabel(resolve(address), name, False, SourceType.USER_DEFINED)
+    def create(
+        address, name, source=SourceType.USER_DEFINED
+    ):  # type: (Addr, str, SourceType) -> Symbol
+        """Create a new symbol (also called label) at the given address.
+
+        :param address: the address where to create the symbol.
+        :param name: the name of the symbol.
+        :param source: the source type for the new symbol."""
+        raw = createLabel(resolve(address), name, False, source)
         return Symbol(raw)
 
     @property
     def address(self):  # type: () -> int
+        """Get the address of this symbol."""
         return self.raw.getAddress().getOffset()
 
     @property
     def name(self):  # type: () -> str
+        """Get the name of this symbol."""
         return self.raw.getName()
 
     @property
     def name_with_namespace(self):  # type: () -> str
+        """Get the fully qualified name of this symbol."""
         return self.raw.getName(True)
 
     @property
     def xrefs(self):  # type: () -> list[Reference]
+        """Get a list of references to this symbol."""
         return [Reference(raw) for raw in self.raw.getReferences()]
 
     @property
     def xref_addrs(self):  # type: () -> list[int]
+        """Get the addresses of all references to this symbol."""
         return [xref.from_address for xref in self.xrefs]
 
     def set_type(self, datatype):  # type: (DataType) -> None
+        """Set the data type of this symbol."""
         create_data(self.address, datatype)
+
+    def rename(
+        self, new_name, source=SourceType.USER_DEFINED
+    ):  # type: (str, SourceType) -> None
+        """Rename this symbol.
+
+            >>> main = Symbol.get("main")
+            >>> main.rename("main_renamed")
+            >>> main.name
+            'main_renamed'
+
+        :param new_name: the new name of the symbol."""
+        self.raw.setName(new_name, source)
 
 
 class DataType(GhidraWrapper):
     @staticmethod
     def get(name):  # type: (str) -> DataType|None
+        """Gets a data type by name, or returns None if not found.
+
+        Warning: this method is relatively slow, since it scans
+        all data types in all data type managers.
+
+            >>> DataType.get("int")
+            int
+
+        :param name: the name of the data type
+        :return: the data type, or None if not found"""
         for datatype in DataType.all():
             if datatype.name == name:
                 return DataType(datatype)
@@ -1052,6 +1366,10 @@ class DataType(GhidraWrapper):
 
     @staticmethod
     def all(only_local=False):  # type: (bool) -> list[DataType]
+        """Get all data types
+
+        :param only_local: if True, return only local data types. Otherwise,
+          will scan all data types in all data type managers."""
         datatypes = list(currentProgram.getDataTypeManager().getAllDataTypes())
         if only_local:
             return datatypes
@@ -1065,11 +1383,17 @@ class DataType(GhidraWrapper):
 
     @property
     def name(self):  # type: () -> str
-        """Get a name of this data type"""
+        """Get a name of this data type
+
+        >>> DataType('int').name
+        'int'
+        """
         return self.raw.getName()
 
     def get_name(self, value):  # type: (int) -> str
-        """Get Enum name for a given value"""
+        """If this data type is an enum, get the name of the value.
+
+        :param value: the value to get the name of"""
         return self.raw.getName(value)
 
     @staticmethod
@@ -1078,6 +1402,12 @@ class DataType(GhidraWrapper):
 
         If insert (true by default), add it to current program.
         Example of a valid c_code is `typedef void* HINTERNET;`
+
+            >>> from_c('typedef void* HINTERNET;')
+            HINTERNET
+
+        :param c_code: the C structure definition
+        :param insert: if True, add the data type to the current program
         """
         dtm = currentProgram.getDataTypeManager()
         parser = CParser(dtm)
@@ -1093,35 +1423,141 @@ class DataType(GhidraWrapper):
 
 
 class Emulator(GhidraWrapper):
+    """Wraps a Ghidra EmulatorHelper object."""
+
     def __init__(self):  # type: () -> None
+        """Create a new Emulator object."""
         raw = EmulatorHelper(currentProgram)
         GhidraWrapper.__init__(self, raw)
 
     @property
     def pc(self):  # type: () -> Addr
+        """Get the program counter of the emulated program."""
         return self.raw.getExecutionAddress()
 
     def set_pc(self, address):  # type: (Addr) -> None
+        """Set the program counter of the emulated program."""
         pc = self.raw.getPCRegister()
         self.raw.writeRegister(pc, address)
 
+    def __getitem__(self, reg_or_addr):  # type: (Reg|int) -> int
+        """Read the register or a single byte of the emulated program.
+
+            >>> emulator.write_register("eax", 1337)
+            >>> emulator["eax"]
+            1337
+            >>> emulator.write_memory(0x1000, "A")
+            >>> emulator[0x1000]
+            65
+
+        Warning: if speed matters, don't read byte by byte using this
+        method, use read_memory instead.
+
+        :param reg_or_addr: the register or address to read from"""
+        if isinstance(reg_or_addr, (int, long)):
+            return ord(self.read_memory(reg_or_addr, 1))
+        elif isinstance(reg_or_addr, str):
+            return self.read_register(reg_or_addr)
+        else:
+            raise TypeError("Invalid type for reg_or_addr")
+
+    def __setitem__(self, reg_or_addr, value):  # type: (Reg|int, int|str) -> None
+        """Write to the register or memory of the emulated program.
+
+            >>> emulator["eax"] = 1234
+            >>> emulator.read_register("eax")
+            1337
+            >>> emulator[0x1000] = "ABC"
+            >>> emulator.read_memory(0x1001, 1)
+            66
+            >>> emulator[0x1000] = 123
+            >>> emulator.read_memory(0x1000, 1)
+            123
+
+        Warning: if speed matters, don't read byte by byte using this
+        method, use read_memory instead.
+
+        :param reg_or_addr: the register or address to write to
+        :param value: the value to write"""
+        if isinstance(reg_or_addr, (int, long)):
+            if isinstance(value, str):
+                self.write_memory(reg_or_addr, value)
+            else:
+                assert -127 <= value < 256  # <3 signed bytes
+                value = value % 256
+                self.write_memory(reg_or_addr, chr(value))
+        elif isinstance(reg_or_addr, str):
+            assert isinstance(value, (int, long))
+            self.write_register(reg_or_addr, value)
+
     def read_register(self, reg):  # type: (Reg) -> int
+        """Read from the register of the emulated program.
+
+            >>> emulator.write_register("eax", 1337)
+            >>> emulator.read_register("eax")
+            1337
+
+        :param reg: the register to read from."""
         return self.raw.readRegister(reg)
 
     def write_register(self, reg, value):  # type: (Reg, int) -> None
+        """Write to the register of the emulated program.
+
+            >>> emulator.write_register("eax", 1)
+            >>> emulator.read_register("eax")
+            1
+
+        :param reg: the register to write to
+        :param value: the value to write"""
         self.raw.writeRegister(reg, value)
 
     def get_bytes(self, address, length):  # type: (Addr, int) -> str
+        """An alias for `read_memory`.
+
+            >>> emulator.write_memory(0x1000, "1")
+            >>> emulator.get_bytes(0x1000, 1)
+            '1'
+
+        :param address: the address to read from
+        :param length: the length to read"""
         bytelist = self.raw.readMemory(address, length)
         return "".join(chr(x % 256) for x in bytelist)
 
     def read_memory(self, address, length):  # type: (Addr, int) -> str
+        """Read from the memory of the emulated program.
+
+            >>> emulator.write_memory(0x1000, "1")
+            >>> emulator.get_bytes(0x1000, 1)
+            '1'
+
+        :param address: the address to read from
+        :param length: the length to read"""
         return self.get_bytes(address, length)
 
     def write_memory(self, address, value):  # type: (Addr, str) -> None
+        """Write to the memory of the emulated program.
+
+            >>> emulator.write_memory(0x1000, "1")
+            >>> emulator.read_memory(0x1000, 1)
+            '1'
+
+        :param address: the address to write to
+        :param value: the value to write"""
         self.raw.writeMemory(address, value)
 
     def emulate(self, start, end):  # type: (Addr, Addr) -> None
+        """Emulate from start to end address.
+
+        This method will set a breakpoint at the end address, and clear it after
+        the emulation is done.
+
+            >>> emulator.write_memory(0x1000, "1")
+            >>> emulator.emulate(0x1000, 0x1005)
+            >>> emulator.read_memory(0x1000, 1)
+            '0'
+
+        :param start: the start address to emulate
+        :param end: the end address to emulate"""
         self.set_pc(start)
         end = resolve(end)
         self.raw.setBreakpoint(end)
@@ -1132,6 +1568,9 @@ class Emulator(GhidraWrapper):
             raise RuntimeError("Error when running: {}".format(err))
 
     def read_varnode(self, varnode):  # type: (Varnode) -> int
+        """Read from the varnode of the emulated program.
+
+        This method can't read hash and unique varnodes"""
         if varnode.is_constant:
             return varnode.value
         elif varnode.is_address:
@@ -1151,6 +1590,11 @@ class Emulator(GhidraWrapper):
     def trace_pcode(
         self, start, end, callback
     ):  # type: (Addr, Addr, Callable[[PcodeOp], None]) -> None
+        """Emulate from start to end address, with callback for each executed PcodeOp.
+
+        :param start: the start address to emulate
+        :param end: the end address to emulate
+        :param callback: the callback to call for each executed Pcode"""
         self.set_pc(start)
         current = resolve(start)
         end = resolve(end)
@@ -1189,11 +1633,13 @@ class Emulator(GhidraWrapper):
         return known_state
 
 
-def xor(a, b):  # type: (str, str) -> str
-    return "".join(chr(ord(x) ^ ord(y)) for x, y in zip(a, b))
-
-
 def create_data(address, datatype):  # type: (Addr, DataType) -> None
+    """Force the type of the data defined at the given address to `datatype`.
+
+    This function will clear the old type if it already has one
+
+    :param address: address of the data.
+    :param datatype: datatype to use for the data at `address`."""
     try:
         createData(resolve(address), unwrap(datatype))
     except:
@@ -1202,26 +1648,138 @@ def create_data(address, datatype):  # type: (Addr, DataType) -> None
 
 
 def get_string(address):  # type: (Addr) -> str|None
+    """Get the string defined at the given address.
+
+    This function will return None if the data defined in Ghidra at the
+    given address is not a string. This function will also return None
+    if the string at `adress` was not defined in Ghidra. To read a
+    null-terminated string from Ghidra memory, use `read_cstring` instead.
+
+        >>> get_string(0x1000)
+        'Hello, world!'
+
+    :param address: address where string should be located."""
     string = getDataAt(resolve(address))
     if string and string.hasStringValue():
         return string.getValue()
     return None
 
 
+def read_cstring(address):  # type: (Addr) -> str
+    """Read a null-terminated string from Ghidra memory.
+
+    This function ignores metadata available to Ghidra and just reads
+    the bytes until a nullbyt is encountered.
+
+        >>> read_cstring(0x1000)
+        'Hello, world!'
+
+    :param address: address from which to start reading."""
+    address = resolve_to_int(address)
+    string = ""
+    while True:
+        c = read_u8(address)
+        if c == 0:
+            break
+        string += chr(c)
+        address += 1
+    return string
+
+
 def current_location():  # type: () -> int
+    """Get the current location in the program.
+
+    >>> current_location()
+    0x1000
+    """
     return currentLocation.getAddress().getOffset()
 
 
-def get_u32(address):
-    return from_bytes(get_bytes(address, 2))
+def read_u8(address):  # type: (Addr) -> int
+    """Read a byte from program at address.
+
+        >>> read_u8(0x1000)
+        0x01
+
+    :param address: address from which to read."""
+    return from_bytes(read_bytes(address, 1))
 
 
-def get_bytes(address, length):  # type: (Addr, int) -> str
+def read_u16(address):  # type: (Addr) -> int
+    """Read a 16bit integer from program at address.
+
+        >>> read_u16(0x1000)
+        0x0102
+
+    :param address: address from which to read."""
+    return from_bytes(read_bytes(address, 2))
+
+
+def read_u32(address):  # type: (Addr) -> int
+    """Read a 32bit integer from program at address.
+
+        >>> read_u32(0x1000)
+        0x01020304
+
+    :param address: address from which to read."""
+    return from_bytes(read_bytes(address, 4))
+
+
+def read_bytes(address, length):  # type: (Addr, int) -> str
+    """Read a byte stream from program at address.
+
+        >>> read_bytes(0x1000, 4)
+        'test'
+
+    :param address: address from which to read.
+    :param length: number of bytes to read."""
     address = resolve(address)
     return "".join(chr(x % 256) for x in getBytes(address, length))
 
 
 def from_bytes(b):  # type: (str | list[int]) -> int
+    """Decode a byte stream as a little-endian integer.
+
+        >>> from_bytes([0x01, 0x02])
+        0x0201
+
+    :param b: byte stream to decode."""
     if isinstance(b, str):
         b = [ord(x) for x in b]
     return sum((v % 256) << (i * 8) for i, v in enumerate(b))
+
+
+def unhex(s):  # type: (str) -> str
+    """Decode a hex string.
+
+        >>> unhex("01 02")
+        '0102'
+
+    :param s: hex string to decode."""
+    return s.replace(" ", "").replace("\n", "").decode("hex")  # type: ignore <- py2
+
+
+def enhex(s):  # type: (str | list[int]) -> str
+    """Convert raw bytes to a hex string.
+
+        >>> enhex([0x01, 0x02])
+        '0102'
+
+    :param s: raw bytes to encode."""
+    if isinstance(s, str):
+        s = [ord(x) for x in s]
+    return s.encode("hex")  # type: ignore <- py2
+
+
+def xor(a, b):  # type: (str, str) -> str
+    """XOR two bytestrings together.
+
+    If two bytestrings are not the same length, the result will be
+    truncated to the length of the shorter string.
+
+        >>> xor("\x01\x02", "\x03\x04")
+        '\x02\x06'
+
+    :param a: the first bytestring.
+    :param b: the second bytestring."""
+    return "".join(chr(ord(x) ^ ord(y)) for x, y in zip(a, b))
