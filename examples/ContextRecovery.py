@@ -6,7 +6,6 @@
 # was written in Delphi, first three parameters are passed in registers which
 # makes our job easy.
 
-
 from ghidralib import *
 
 

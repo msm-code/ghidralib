@@ -7,7 +7,6 @@
 # Usage:
 # 1. Add the COMPUTED_JUMP references to the branch instruction manually
 # 2. run the script when cursor is over the branch instruction
-# //@category Repair
 
 from ghidralib import *
 
@@ -29,13 +28,12 @@ def is_computed_branch(inst):  # type: (Instruction) -> bool
 def switch_override(addr):  # type: (Addr) -> None
     inst = Instruction(addr)
     if not is_computed_branch(inst):
-        print("Please highlight or place the cursor on the instruction performing the computed jump")  # fmt: skip
+        print("Please highlight or place the cursor on the instruction performing the computed jump.")  # fmt: skip
         return
 
     destlist = [xref.to_address for xref in inst.xrefs_from if xref.is_jump]
     if not destlist:
-        print("Please highlight destination instructions in addition to instruction performing switch")  # fmt: skip
-        print(" Or put CONDITIONAL_JUMP destination references at the branching instruction")  # fmt: skip
+        print("Please highlight destination instructions too.")  # fmt: skip
         return
 
     func = Function.get(addr)
@@ -44,9 +42,7 @@ def switch_override(addr):  # type: (Addr) -> None
         return
 
     for dest in destlist:
-        inst.add_operand_reference(
-            0, dest, RefType.COMPUTED_JUMP, SourceType.USER_DEFINED
-        )
+        inst.add_operand_reference(0, dest, RefType.COMPUTED_JUMP)
 
     # For now, just fall-back to java at the end
     from ghidra.program.model.pcode import JumpTable  # type: ignore
@@ -58,4 +54,4 @@ def switch_override(addr):  # type: (Addr) -> None
     CreateFunctionCmd.fixupFunctionBody(currentProgram, func.raw, monitor)
 
 
-switch_override(current_location())
+switch_override(Program.location())
