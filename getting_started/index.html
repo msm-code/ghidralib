@@ -304,11 +304,22 @@ print(emu.read_memory(0x401000, 16))
 <h3 id="graphs">Graphs</h3>
 <pre><code class="language-python"># Get the control flow graph of the main function (and display it)
 Function(&quot;main&quot;).control_flow.show()
-
-def callback(func):
+</code></pre>
+<p>Graph visualisation is not the most useful feature of this library, but it
+looks cool:</p>
+<p><img alt="" src="../graph.png" /></p>
+<p>And you can easily build the graph yourself:</p>
+<pre><code class="language-python">g = Graph.create()
+foo = g.vertex(&quot;foo&quot;)
+bar = g.vertex(&quot;bar&quot;)
+g.edge(foo, bar)
+g.show()
+</code></pre>
+<p>Or do some actually useful stuff with graph algorithms:</p>
+<pre><code class="language-python">def callback(func):
     print(&quot;visiting&quot;, func)
 
-# Traverse the call graph of the program, while calling the callback
+# Traverse the program functions in topological order, and print the function names.
 Program.call_graph.dfs(callback)
 </code></pre>
 <h2 id="conventions">Conventions</h2>
