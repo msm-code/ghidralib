@@ -54,7 +54,7 @@ print(get_bytes(pos, len_bytes))
   ```
 </details>
 
-3. Process all calls to a function and get the parameters:
+3. Process all calls to a string deobfuscation function and get the parameters:
 
 ```python
 for call in Function("MyCustomCrypto").calls:
@@ -76,28 +76,59 @@ for call in Function("MyCustomCrypto").calls:
 ```python
 DataType("_NT_TIB")  # Get a datatype by name
 DataType.from_c("typedef void* HINTERNET;")  # Quickly parse structs and typedefs
-Symbol("main")  # Get a symbol by name
-Symbol(0x8ca39c)  # You can also create symbol by address (as integer or Ghidra object)
-print(Function(0x8ca3f0).decompile())  # Decompile a function containing address
-print(Instruction(0x8ca3f0).pcode)  # Get low pcode (fast)
-print(Instruction(0x8ca3f0).high_pcode)  # Get high pcode (slow)
-BasicBlock(0x123456)  # Get a basic block containing address
-# And much more
+
+func = Function("main")  # Work at various abstract levels
+print(function.instructions)  # Get instructions...
+print(function.basicblocks)  # Get ..basic blocks...
+print(function.pcode)  # ...low pcode...
+print(function.high_pcode)  # ...high pcode...
+print(function.decompile())  # ...or decompile a whole function
+
+for xref in Symbol("PTR_GetProcAddress").xrefs_to:
+  Instruction(xref.from_address).highlight()  # highlight symbol xrefs
 ```
 
-Last but not least, everything has type hints (using Jython compatible type comments).
-It makes programming in Python *much* easier if your IDE supports that.
+5. There are also some flashy (but not necessarily useful) features that might
+grab your attention.
 
-Ghidralib doesn't lock you in - you can always retreat to familiar Ghidra types
+Get the control flow graph of the main function, and display it:
+
+```python
+Function("main").control_flow.show()
+```
+
+![](./docs/graph.png)
+
+Find the shortest path from source to target in the program control flow graph.
+If it exists, highlight all basic blocks along the way.
+
+```python
+source, target = BasicBlock("entry"), BasicBlock(0x00405073)
+path = Program.control_flow().bfs(source)
+while path.get(target):
+    target.highlight()
+    target = path[target]
+```
+
+![](./docs/bfs_highlight.png)
+
+6. Thanks to type hints, scripting gets *much* easier if your IDE supports that.
+
+Finally, ghidralib doesn't lock you in - you can always retreat to familiar Ghidra types
 - they are always just there, in the `.raw` property. For example `instruction.raw`
 is a Ghidra Instruction object, similarly `function.raw` is a Ghidra Function.
 So you can do the routine stuff in ghidralib, and fall back to Java if something
 is not implemented - like in the [SwitchOverride](./examples/SwitchOverride.py) example.
 
-**Check out the [documentation](https://msm-code.github.io/ghidralib/) for more**
+## Learn more
+
+**Check out the [documentation](https://msm-code.github.io/ghidralib/)**, especially the
+[getting started](https://msm-code.github.io/ghidralib/getting_started.html) page.
+
+If you prefer to learn by example, tou can also browse the [examples](./examples/) directory.
 
 A fair warning: ghidralib is still actively developed and the API may change
-in the future. But this doesn't matter for your one-off scripts, does it?
+slightly in the future. But this doesn't matter for your one-off scripts, does it?
 
 ## Contributing
 

@@ -2024,6 +2024,8 @@ class Function(GhidraWrapper, BodyOperationsTrait):
         raw_refs = getReferencesTo(resolve(self.entrypoint))
         return [Reference(raw) for raw in raw_refs]
 
+    xrefs_to = xrefs
+
     @property
     def xref_addrs(self):  # type: () -> list[int]
         """Get the source addresses of references to this function."""
@@ -2273,6 +2275,8 @@ class Symbol(GhidraWrapper):
     def xrefs(self):  # type: () -> list[Reference]
         """Get a list of references to this symbol."""
         return [Reference(raw) for raw in self.raw.getReferences()]
+
+    xrefs_to = xrefs
 
     @property
     def xref_addrs(self):  # type: () -> list[int]

@@ -255,19 +255,18 @@ Or you can do some actually useful things with included graph algorithms
 
 ### Path finding
 
-Find the shortest path from source to target in the control flow graph.
+Find the shortest path from source to target in the program control flow graph.
 If it exists, highlight all basic blocks along the way.
 
 ```python
-source = BasicBlock("entry")
-target = BasicBlock(0x00405073)
-bfs = Program.control_flow().bfs(source)
-while bfs.get(target):
+source, target = BasicBlock("entry"), BasicBlock(0x00405073)
+path = Program.control_flow().bfs(source)
+while path.get(target):
     target.highlight()
-    target = bfs[target]
+    target = path[target]
 ```
 
-![](./colorblock.png)
+![](./bfs_highlight.png)
 
 You can highlight anything that has an address (like a basic block, function,
 or a single instruction). Call .unhighlight() to clear the highlight.
