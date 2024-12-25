@@ -328,16 +328,15 @@ g.show()
 <p>Or you can do some actually useful things with included graph algorithms
 (DFS, BFS, and topological sort) - like tracing paths between functions.</p>
 <h3 id="path-finding">Path finding</h3>
-<p>Find the shortest path from source to target in the control flow graph.
+<p>Find the shortest path from source to target in the program control flow graph.
 If it exists, highlight all basic blocks along the way.</p>
-<pre><code class="language-python">source = BasicBlock(&quot;entry&quot;)
-target = BasicBlock(0x00405073)
-bfs = Program.control_flow().bfs(source)
-while bfs.get(target):
+<pre><code class="language-python">source, target = BasicBlock(&quot;entry&quot;), BasicBlock(0x00405073)
+path = Program.control_flow().bfs(source)
+while path.get(target):
     target.highlight()
-    target = bfs[target]
+    target = path[target]
 </code></pre>
-<p><img alt="" src="../colorblock.png" /></p>
+<p><img alt="" src="../bfs_highlight.png" /></p>
 <p>You can highlight anything that has an address (like a basic block, function,
 or a single instruction). Call .unhighlight() to clear the highlight.</p>
 <h2 id="conventions">Conventions</h2>
