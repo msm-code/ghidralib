@@ -25,15 +25,20 @@ from ghidra.app.util import PseudoDisassembler
 from ghidra.app.util.cparser.C import CParser
 from ghidra.util.task import TaskMonitor
 from ghidra.program.model.symbol import SourceType, RefType as GhRefType
-from ghidra.program.model.pcode import HighFunctionDBUtil, Varnode as GhVarnode
-from ghidra.program.model.pcode import BlockGraph as GhBlockGraph, BlockCopy
+from ghidra.program.model.pcode import (
+    HighFunctionDBUtil,
+    Varnode as GhVarnode,
+    BlockGraph as GhBlockGraph,
+    BlockCopy,
+    HighFunction as GhHighFunction,
+)
 from ghidra.program.model.lang import Register as GhRegister
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
 from ghidra.program.model.address import GenericAddress
 from ghidra.app.decompiler import ClangTokenGroup as GhClangTokenGroup
 from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
-from ghidra.program.model.listing import ParameterImpl
+from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
 from ghidra.app.emulator import EmulatorHelper
 from jarray import array
 from __main__ import (
@@ -100,7 +105,7 @@ class GhidraWrapper:
     Similarly, equality is based on the underlying Java object."""
 
     def __init__(self, raw):  # type: (JavaObject|int|str|GhidraWrapper) -> None
-        if isinstance(raw, (int, long, str, unicode)):
+        if isinstance(raw, (int, long, str, unicode, GenericAddress)):
             # Someone passed a primitive type to us.
             # If possible, try to resolve it with a "get" method.
             if hasattr(self, "get"):
@@ -118,6 +123,16 @@ class GhidraWrapper:
 
         if raw is None:
             raise RuntimeError("Object doesn't exist (refusing to wrap None)")
+
+        # TODO - remove the conditional checks and implement this everywhere
+        if hasattr(self, "UNDERLYING_CLASS"):
+            wrapped_type = getattr(self, "UNDERLYING_CLASS")
+            if not isinstance(raw, wrapped_type):
+                raise RuntimeError(
+                    "You are trying to wrap {} as {}".format(
+                        raw.__class__.__name__, self.__class__.__name__
+                    )
+                )
 
         self.__str__ = raw.__str__
         self.__repr__ = raw.__repr__
@@ -323,6 +338,12 @@ class Graph(GenericT, GhidraWrapper):
     def vertex_count(self):  # type: () -> int
         """Return the number of vertices in this graph."""
         return self.raw.vertexSet().size()
+
+    def __len__(self):  # type: () -> int
+        """Return the number of vertices in this graph.
+
+        To get the number of edges, use edge_count."""
+        return self.vertex_count
 
     @property
     def edges(self):  # type: () -> list[T]
@@ -793,19 +814,43 @@ class BlockGraph(PcodeBlock):
 
 
 class HighFunction(GhidraWrapper):
+    @staticmethod
+    def get(address):  # type: (JavaObject|Addr) -> HighFunction|None
+        """Get a HighFunction at a given address, or None if there is none."""
+        if isinstance(address, GhHighFunction):
+            return HighFunction(address)
+        func = Function.get(address)
+        if func is None:
+            return None
+        return func.high_function
+
+    @property
+    def function(self):  # type: () -> Function
+        """Get the underlying function of this high function."""
+        return Function(self.raw.getFunction())
+
     def get_pcode_at(self, address):  # type: (Addr) -> list[PcodeOp]
+        """Get a list of PcodeOps at a given address.
+
+        This list may be empty even if there are instructions at that address."""
         address = resolve(address)
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps(address)]
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
+        """Get a list of all high PcodeOps in this function."""
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps()]
 
     @property
     def basicblocks(self):  # type: () -> list[PcodeBlock]
+        """Get a list of basic blocks in this high function."""
         return [PcodeBlock(raw) for raw in self.raw.getBasicBlocks()]
 
-    def get_pcode_tree(self):  # type: () -> BlockGraph
+    @property
+    def pcode_tree(self):  # type: () -> BlockGraph
+        """Get an AST-like representation of the function's Pcode.
+
+        Warning: this method needs to decompile the function, and is therefore slow."""
         edge_map = {}
         ingraph = GhBlockGraph()
         for block in self.basicblocks:
@@ -838,6 +883,14 @@ class HighFunction(GhidraWrapper):
             if var is not None:
                 result.append(var)
         return result
+
+    def __eq__(self, other):  # type: (object) -> bool
+        """Compare two high functions.
+
+        Fun fact - Ghidra doesn't know how to do this."""
+        if not isinstance(other, HighFunction):
+            return False
+        return self.function == other.function
 
 
 class Reference(GhidraWrapper):
@@ -993,15 +1046,62 @@ RefType.CALLOTHER_OVERRIDE_CALL = RefType(GhRefType.CALLOTHER_OVERRIDE_CALL)
 RefType.CALLOTHER_OVERRIDE_JUMP = RefType(GhRefType.CALLOTHER_OVERRIDE_JUMP)
 
 
+class FlowType(GhidraWrapper):
+    """Wraps a Ghidra FlowType object"""
+
+    @property
+    def is_call(self):  # type: () -> bool
+        """Return True if this flow is a call."""
+        return self.raw.isCall()
+
+    @property
+    def is_jump(self):  # type: () -> bool
+        """Return True if this flow is a jump."""
+        return self.raw.isJump()
+
+    @property
+    def is_computed(self):  # type: () -> bool
+        """Return True if this flow is a computed jump."""
+        return self.raw.isComputed()
+
+    @property
+    def is_conditional(self):  # type: () -> bool
+        """Return True if this flow is a conditional jump."""
+        return self.raw.isConditional()
+
+    @property
+    def is_unconditional(self):  # type: () -> bool
+        """Return True if this flow is an unconditional jump."""
+        return not self.is_conditional
+
+    @property
+    def is_terminal(self):  # type: () -> bool
+        """Return True if this flow is a terminator."""
+        return self.raw.isTerminator()
+
+    @property
+    def has_fallthrough(self):  # type: () -> bool
+        """Return True if this flow has a fallthrough."""
+        return self.raw.hasFallThrough()
+
+    @property
+    def is_override(self):  # type: () -> bool
+        """Return True if this flow is an override."""
+        return self.raw.isOverride()
+
+
 class Instruction(GhidraWrapper):
     """Wraps a Ghidra Instruction object"""
 
-    def get(self, raw_or_address):  # type: (JavaObject|Addr) -> Instruction
+    @staticmethod
+    def get(raw_or_address):  # type: (JavaObject|Addr) -> Instruction|None
         """Get an instruction at an address, or None if not found."""
         if can_resolve(raw_or_address):
             raw = getInstructionAt(resolve(raw_or_address))
         else:
             raw = raw_or_address
+        if raw is None:
+            return None
         return Instruction(raw)
 
     @property
@@ -1018,6 +1118,8 @@ class Instruction(GhidraWrapper):
     def previous(self):  # type: () -> Instruction
         """Get the previous instruction."""
         return Instruction(self.raw.getPrevious())
+
+    prev = previous
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
@@ -1036,14 +1138,18 @@ class Instruction(GhidraWrapper):
         """Get a list of references that point to this instruction."""
         return [Reference(raw) for raw in self.raw.getReferencesFrom()]
 
-    def to_bytes(self):  # type: () -> bytes
+    def to_bytes(self):  # type: () -> str
         """Get the bytes of this instruction."""
-        return self.raw.getBytes()
+        return to_bytestring(self.raw.getBytes())
 
     @property
     def length(self):  # type: () -> int
-        """Get the length of this instruction."""
+        """Get the length of this instruction in bytes."""
         return self.raw.getLength()
+
+    def __len__(self):  # type: () -> int
+        """Get the length of this instruction in bytes."""
+        return self.length
 
     def operand(self, ndx):  # type: (int) -> int
         """Get the nth operand of this instruction as a scalar."""
@@ -1087,11 +1193,12 @@ class Instruction(GhidraWrapper):
         return [self.operand(i) for i in range(self.raw.getNumOperands())]
 
     @property
-    def flow(self):  # type: () -> RefType
+    def flow_type(self):  # type: () -> FlowType
         """Get the flow type of this instruction.
 
         For example, for x86 JMP this will return RefType.UNCONDITIONAL_JUMP"""
-        return RefType(self.raw.getFlowType())
+        # TODO this is FlowType, not RefType.
+        return FlowType(self.raw.getFlowType())
 
     # int opIndex, Address refAddr, RefType type, SourceType sourceType
     def add_operand_reference(
@@ -1210,7 +1317,7 @@ class BasicBlock(AddressSet):
     """Wraps a Ghidra CodeBlock object"""
 
     @staticmethod
-    def get(raw_or_address):  # type: (JavaObject|Addr) -> BasicBlock
+    def get(raw_or_address):  # type: (JavaObject|Addr) -> BasicBlock|None
         """Get a BasicBlock object for the given address, or return None.
 
         This function is tolerant and will accept different types of arguments:
@@ -1219,14 +1326,46 @@ class BasicBlock(AddressSet):
         * symbol as string (will be resolved)
         * BasicBlock object (wrapped or unwrapped)"""
 
+        if raw_or_address is None:
+            return None
         if can_resolve(raw_or_address):
             block_model = SimpleBlockModel(currentProgram)
-            raw = block_model.getFirstCodeBlockContaining(
-                resolve(raw_or_address), TaskMonitor.DUMMY
-            )
+            addr = try_resolve(raw_or_address)
+            if addr is None:
+                return None
+            raw = block_model.getFirstCodeBlockContaining(addr, TaskMonitor.DUMMY)
+            if raw is None:
+                return None
         else:
             raw = raw_or_address
         return BasicBlock(raw)
+
+    @staticmethod
+    def all():  # type: () -> list[BasicBlock]
+        """Get a list of all basic blocks in the program."""
+        block_model = SimpleBlockModel(currentProgram)
+        return [BasicBlock(b) for b in block_model.getCodeBlocks(TaskMonitor.DUMMY)]
+
+    @staticmethod
+    def program_control_flow():  # type: () -> Graph[BasicBlock]
+        """Get a graph representing the whole program control flow.
+
+        This graph may be very big, so don't try to show it."""
+        g = Graph.create()
+        for block in BasicBlock.all():
+            g.vertex(block, str(block.address))
+        for block in BasicBlock.all():
+            for dest in block.destinations:
+                g.edge(block, dest)
+        return g
+
+    @property
+    def name(self):  # type: () -> str
+        """Get the name of this basic block.
+
+        Return the symbol at the start of this basic block, if any. Otherwise,
+        return the address of the first instruction as string."""
+        return self.raw.getName()
 
     @property
     def address(self):  # type: () -> int
@@ -1281,6 +1420,23 @@ class BasicBlock(AddressSet):
         but I think this is a useful distinction to keep."""
         return AddressSet(self.raw)
 
+    @property
+    def flow_type(self):  # type: () -> FlowType
+        """Get the flow type of this basic block.
+
+        In other words, if any weird things with control flow are happening
+        in this node."""
+        return FlowType(self.raw.getFlowType())
+
+    def __eq__(self, other):  # type: (object) -> bool
+        """Compare two basic blocks for equality.
+
+        Apparently Ghidra doesn't know how to do this"""
+        if not isinstance(other, BasicBlock):
+            return False
+        # This is not fully correct, but more correct than the default.
+        return self.address == other.address
+
 
 class Variable(GhidraWrapper):
     """Wraps a Ghidra Variable object"""
@@ -1295,7 +1451,9 @@ class Variable(GhidraWrapper):
         """Rename this variable"""
         self.rename(name, SourceType.USER_DEFINED)
 
-    def rename(self, name, source):  # type: (str, SourceType) -> None
+    def rename(
+        self, name, source=SourceType.USER_DEFINED
+    ):  # type: (str, SourceType) -> None
         """Rename this variable"""
         self.raw.setName(name, source)
 
@@ -1304,24 +1462,74 @@ class Variable(GhidraWrapper):
         """Get the data type of this variable"""
         return DataType(self.raw.getDataType())
 
+    @data_type.setter
+    def data_type(
+        self, data_type, source=SourceType.USER_DEFINED
+    ):  # type: (DataType, SourceType) -> None
+        """Set the data type of this variable"""
+        self.raw.setDataType(data_type.raw, source)
+
     @property
     def is_valid(self):  # type: () -> bool
         """Check if this variable is valid"""
         return self.raw.isValid()
 
     @property
-    def comment(self):  # type: () -> str
+    def comment(self):  # type: () -> str|None
         """ "Get the comment for this variable"""
         return self.raw.getComment()
 
     @comment.setter
-    def comment(self, name):  # type: (str) -> None
+    def comment(self, name):  # type: (str|None) -> None
         """Set the comment for this variable"""
         self.set_comment(name)
 
-    def set_comment(self, comment):  # type: (str) -> None
+    def set_comment(self, comment):  # type: (str|None) -> None
         """Set the comment for this variable"""
         self.raw.setComment(comment)
+
+    @property
+    def is_auto(self):  # type: () -> bool
+        """Check if this variable is an automatic parameter.
+
+        Some parameters are "hidden parameters" dictated by the calling
+        convention. This method returns true for such paramteters."""
+        return self.raw.getVariableStorage().isAutoStorage()
+
+    @property
+    def is_forced_indirect(self):  # type: () -> bool
+        """Check if this variable was forced to be a pointer by calling convention"""
+        return self.raw.getVariableStorage().isForcedIndirect()
+
+    @property
+    def has_bad_storage(self):  # type: () -> bool
+        """Check if this variable has bad storage (could not be resolved)"""
+        return self.raw.getVariableStorage().isBadStorage()
+
+    @property
+    def is_unassigned_storage(self):  # type: () -> bool
+        """Check if this variable has no assigned storage (varnodes)"""
+        return self.raw.getVariableStorage().isUnassignedStorage()
+
+    @property
+    def is_void(self):  # type: () -> bool
+        """Check if this variable is of type void"""
+        return self.raw.getVariableStorage().isVoidStorage()
+
+    @property
+    def stack_offfset(self):  # type: () -> int
+        """Get the stack offset of this variable."""
+        return self.raw.getVariableStorage().getStackOffset()
+
+    @property
+    def is_constant(self):  # type: () -> bool
+        """Check if this variable consists of a single constant-space varnode"""
+        return self.raw.getVariableStorage().isConstantStorage()
+
+    @property
+    def is_hash(self):  # type: () -> bool
+        """Check if this variable consists of a single hash-space varnode."""
+        return self.raw.getVariableStorage().isHashStorage()
 
     @property
     def is_stack(self):  # type: () -> bool
@@ -1374,6 +1582,11 @@ class Variable(GhidraWrapper):
             raise ValueError("Variable is not a register variable")
         return reg.getName()
 
+    @property
+    def function(self):  # type: () -> Function
+        """Get the function associated with this variable."""
+        return Function(self.raw.getFunction())
+
 
 class Parameter(Variable):
     """Wraps a Ghidra Parameter object."""
@@ -1395,31 +1608,24 @@ class FunctionCall:
     Can be used to get the function being called and the parameters passed to it."""
 
     def __init__(self, function, address):  # type: (Function, Addr) -> None
-        self.function = function
+        self.called_function = function
         self.address = resolve(address)
 
-    def get_high_pcode(self):  # type: () -> PcodeOp
-        """Get the high-level PcodeOp for this function call.
+    @property
+    def caller(self):  # type: () -> Function|None
+        """Get the function where this function call takes place."""
+        return Function.get(self.address)
 
-        High-level Pcode `call` ops have the parameters resolved, so we
-        can use them to read them when analysing Pcode.
+    calling_function = caller
 
-        Warning: this method needs to decompile the function, and is therefore slow."""
-        for pcode_op in PcodeOp.get_high_pcode_at(self.address):
-            if pcode_op.opcode != pcode_op.CALL:
-                continue
-            return pcode_op
+    @property
+    def instruction(self):  # type: () -> Instruction
+        return Instruction(self.address)
 
-        raise RuntimeError("No CALL at {}".format(hex(self.address)))
-
-    def get_varnodes(self):  # type: () -> dict[Varnode, int]
-        """Single-step the current basic block in the emulator, and trace the varnodes
-
-        This will return a dictionary of varnodes and their values."""
-
-        basicblock = BasicBlock(self.address)
-        emu = Emulator()
-        return emu.propagate_varnodes(basicblock.start_address, self.address)
+    @property
+    def callee(self):  # type: () -> Function
+        """Get the function being called."""
+        return self.called_function
 
     def emulate(self):  # type: () -> Emulator
         """Emulate the basic block of this function call, and return the state"""
@@ -1428,18 +1634,47 @@ class FunctionCall:
         emu.emulate(basicblock.start_address, self.address)
         return emu
 
-    def get_args_as_varnodes(self):  # type: () -> list[Varnode]
-        """Get a list of the arguments passed to this function call, as varnodes.
+    @property
+    def high_pcodeop(self):  # type: () -> PcodeOp|None
+        """Get the high-level PcodeOp for this function call.
 
+        High-level Pcode `call` ops have the parameters resolved, so we
+        can use them to read them when analysing Pcode.
+
+        Warning: this works on decompiled functions only, so it will work
+          if the call is done from a region not recognised as function.
         Warning: this method needs to decompile the function, and is therefore slow."""
-        pcode_op = self.get_high_pcode()
-        return pcode_op.inputs[1:]  # skip function addr
+        for pcode_op in PcodeOp.get_high_pcode_at(self.address):
+            if pcode_op.opcode != pcode_op.CALL:
+                continue
+            return pcode_op
+
+        raise RuntimeError("No CALL at {}".format(hex(self.address)))
+
+    @property
+    def high_varnodes(self):  # type: () -> list[Varnode]
+        """Get a list of the arguments passed to this function call, as high varnodes.
+
+        In other words, decompile the function, and return the varnodes associated with
+        the function parameters, as seen by Ghidra decompiler.
+
+        Warning: this works on decompiled functions only, so it will work
+          if the call is done from a region not recognised as function.
+        Warning: this method needs to decompile the function, and is therefore slow."""
+        op = self.high_pcodeop
+        if not op:
+            return []
+        return op.inputs[1:]  # skip function addr
 
     def get_args(self, emulate=True):  # type: (bool) -> list[int|None]
         """Get a list of the arguments passed to this function call, as integers.
 
-        This method gets arguments of this function, as seen by Ghidra decompiler.
-        If it's not possible to get an argument, return None in its place.
+        This method tries to get arguments of this function, as seen by Ghidra
+        decompiler. A limited symbolic execution is performed to resolve the pointers.
+        If it's not possible to get an argument, None is stored in its place.
+
+        Warning: this works on decompiled functions only, so it will work
+          if the call is done from a region not recognised as function.
         Warning: this method needs to decompile the function, and is therefore slow."""
         basicblock = BasicBlock(self.address)
 
@@ -1451,7 +1686,7 @@ class FunctionCall:
             state = emu.propagate_varnodes(basicblock.start_address, self.address)
 
         args = []
-        for varnode in self.get_args_as_varnodes():
+        for varnode in self.high_varnodes:
             varnode = varnode.free
             if varnode.has_value:
                 args.append(varnode.value)
@@ -1501,10 +1736,16 @@ class ClangTokenGroup(GhidraWrapper):
 class Function(GhidraWrapper):
     """Wraps a Ghidra Function object."""
 
+    UNDERLYING_CLASS = GhFunction
+
     @staticmethod
     def get(addr):  # type: (Addr|JavaObject) -> Function|None
         """Return a function at the given address, or None if no function
         exists there."""
+        if isinstance(addr, GhFunction):
+            return Function(addr)
+        if isinstance(addr, Function):
+            return Function(addr.raw)
         addr = try_resolve(addr)
         if addr is None:
             return None
@@ -1764,13 +2005,7 @@ class Function(GhidraWrapper):
         """Get an AST-like representation of the function's Pcode.
 
         Warning: this method needs to decompile the function, and is therefore slow."""
-        return self.get_pcode_tree()
-
-    def get_pcode_tree(self):  # type: () -> BlockGraph
-        """Get an AST-like representation of the function's Pcode.
-
-        Warning: this method needs to decompile the function, and is therefore slow."""
-        return self.get_high_function().get_pcode_tree()
+        return self.get_high_function().pcode_tree
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
@@ -2131,7 +2366,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to read from
         :param length: the length to read"""
-        bytelist = self.raw.readMemory(address, length)
+        bytelist = self.raw.readMemory(resolve(address), length)
         return "".join(chr(x % 256) for x in bytelist)
 
     read_memory = get_bytes
@@ -2145,7 +2380,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to
         :param value: the value to write"""
-        self.raw.writeMemory(address, value)
+        self.raw.writeMemory(resolve(address), value)
 
     def emulate(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
         """Emulate from start to end address.
@@ -2173,7 +2408,7 @@ class Emulator(GhidraWrapper):
 
         for end in ends:
             end = resolve(end)
-            self.raw.setBreakpoint(end)
+            self.raw.clearBreakpoint(end)
 
         if not is_breakpoint:
             err = self.raw.getLastError()
@@ -2279,7 +2514,6 @@ class Program(GhidraWrapper):
         """Get the call graph for this program."""
         g = Graph.create()
         for func in Function.all():
-            # Use str(func.address) as an unique ID
             g.vertex(func, func.name)
         for func in Function.all():
             for out in func.called:
@@ -2287,6 +2521,15 @@ class Program(GhidraWrapper):
                     continue
                 g.edge(func, out)
         return g
+
+
+def to_bytestring(val):  # type: (str | list[int]) -> str
+    """Ensure the passed value is a bytestring.
+
+    This is used to convert java byte arrays to a proper python bytestring."""
+    if not isinstance(val, Str):
+        return "".join(chr(i % 256) for i in val)
+    return val
 
 
 def disassemble(
@@ -2408,9 +2651,8 @@ def from_bytes(b):  # type: (str | list[int]) -> int
         0x0201
 
     :param b: byte stream to decode."""
-    if isinstance(b, Str):
-        b = [ord(x) for x in b]
-    return sum((v % 256) << (i * 8) for i, v in enumerate(b))
+    b = to_bytestring(b)
+    return sum(ord(v) << (i * 8) for i, v in enumerate(b))
 
 
 def unhex(s):  # type: (str) -> str
