@@ -19,6 +19,7 @@ types, by getting a `.raw` property, for example:
 For more details, see the documentation at https://msm-code.github.io/ghidralib/.
 """
 
+from abc import abstractmethod
 from ghidra.app.decompiler import DecompInterface
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
 from ghidra.app.util import PseudoDisassembler
@@ -34,12 +35,16 @@ from ghidra.program.model.pcode import (
 )
 from ghidra.program.model.lang import Register as GhRegister
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
-from ghidra.program.model.address import GenericAddress
+from ghidra.program.model.address import GenericAddress, AddressSet as GhAddressSet
 from ghidra.app.decompiler import ClangTokenGroup as GhClangTokenGroup
 from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
 from ghidra.app.emulator import EmulatorHelper
+from ghidra.app.plugin.core.colorizer import ColorizingService
+from ghidra.app.util.viewer.field import ListingColors
+from ghidra.app.util import SearchConstants
+from java.awt import Color
 from jarray import array
 from __main__ import (
     toAddr,
@@ -175,6 +180,10 @@ if TYPE_CHECKING:
 Str = (str, unicode)
 
 
+# Use this color for highlight by default - it should work with any theme.
+HIGHLIGHT_COLOR = SearchConstants.SEARCH_HIGHLIGHT_COLOR  # type: Color
+
+
 def resolve(addr):  # type: (Addr) -> GenericAddress
     """Convert an arbitrary addressable value to a Ghidra Address object.
 
@@ -288,7 +297,7 @@ class Graph(GenericT, GhidraWrapper):
         return Graph(AttributedGraph(name, graphtype))
 
     def __contains__(self, vtx):  # type: (T) -> bool
-        """Check if a vertex with the given ID exists in this graph.
+        """Check if a given vertex exists in this graph.
 
         :param vtx: The ID of the vertex to check."""
         vid = get_unique_string(vtx)
@@ -296,7 +305,7 @@ class Graph(GenericT, GhidraWrapper):
         return self.raw.containsVertex(vobj)
 
     def has_vertex(self, vtx):  # type: (T) -> bool
-        """Check if a vertex with the given ID exists in this graph.
+        """Check if a given vertex exists in this graph.
 
         :param vtx: The ID of the vertex to check."""
         return vtx in self
@@ -380,36 +389,114 @@ class Graph(GenericT, GhidraWrapper):
         display = broker.getDefaultGraphDisplay(False, monitor)
         display.setGraph(self.raw, options, description, False, monitor)
 
-    def dfs(self, start, callback):  # type: (T, Callable[[T], None]) -> None
+    def __resolve(self, vid):  # type: (str) -> T
+        """Resolve a vertex ID to a vertex object.
+
+        :param id: The ID of the vertex to resolve."""
+        if vid in self.data:
+            return self.data[vid]
+        else:
+            return vid  # type: ignore graph created outside of ghidralib?
+
+    def dfs(
+        self, origin, callback=lambda _: None
+    ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
         """Perform a depth-first search on this graph, starting from the given vertex.
+
+        Warning: This won't reach every node in the graph, if it's not connected.
 
         :param start: The ID of the vertex to start the search from.
         :param callback: A callback function to call for each vertex visited.
+        :returns: A dictionary of parent vertices for each visited vertex.
         """
-        tovisit = [get_unique_string(start)]
+        tovisit = [(None, get_unique_string(origin))]
         visited = set()
+        parents = {origin: None}  # type: dict[T, T|None]
         while tovisit:
-            vid = tovisit.pop()
+            parent, vid = tovisit.pop()
             if vid in visited:
                 continue
             visited.add(vid)
-            if vid in self.data:
-                callback(self.data[vid])
-            else:
-                # Whoops, graph created outside of Ghidralib?
-                # Just call the callback with the ID
-                callback(vid)  # type: ignore
+            vobj = self.__resolve(vid)
+            parents[vobj] = parent
+            callback(vobj)
             for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
-                tovisit.append(self.raw.getEdgeTarget(edge).getId())
+                tovisit.append((vobj, self.raw.getEdgeTarget(edge).getId()))
+        return parents
 
-    def toposort(self, start):  # type: (T) -> list[T]
+    def toposort(self, origin):  # type: (T) -> list[T]
         """Perform a topological sort on this graph, starting from the given vertex.
+        :param origin: The ID of the vertex to start the sort from.
 
-        :param start: The ID of the vertex to start the sort from.
+        The order is such that if there is an edge from A to B, then A will come
+        before B in the list. This means that if the graph is connected and acyclic
+        then "origin" will be the last element in the list.
+
+        On a practical example, for a call graph, this means that if A calls B, then
+        A will be before B in the list - so if you want to process from the bottom up,
+        you should use the entry point of the program as the origin.
+
         :returns: a list of vertex IDs in topological order."""
-        toposorted = []
-        self.dfs(start, lambda vtx: toposorted.append(vtx))
-        return toposorted
+        visited = set()
+        result = []
+
+        def dfs(vid):
+            visited.add(vid)
+            for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
+                target = self.raw.getEdgeTarget(edge)
+                if target.getId() not in visited:
+                    dfs(target.getId())
+            result.append(self.__resolve(vid))
+
+        dfs(get_unique_string(origin))
+        for vid in self.raw.vertexSet():
+            if vid.getId() not in visited:
+                dfs(vid.getId())
+        return result
+
+    def bfs(
+        self, origin, callback=lambda _: None
+    ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
+        """Perform a breadth-first search on this graph, starting from the given vertex.
+
+        Warning: This won't reach every node in the graph, if it's not connected.
+        :param start: The ID of the vertex to start the search from.
+        :param callback: A callback function to call for each vertex visited.
+        """
+        tovisit = [(None, get_unique_string(origin))]
+        visited = set()
+        parents = {origin: None}  # type: dict[T, T|None]
+        while tovisit:
+            parent, vid = tovisit.pop(0)
+            if vid in visited:
+                continue
+            visited.add(vid)
+            vobj = self.__resolve(vid)
+            parents[vobj] = parent
+            callback(vobj)
+            for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
+                tovisit.append((vobj, self.raw.getEdgeTarget(edge).getId()))
+        return parents
+
+
+class BodyOperationsTrait:
+    """A trait for objects that have a body.
+
+    It provides generic methods that work with anything that has a body
+    (an assigned set of addresses in the program), such as highlighting."""
+
+    @property
+    @abstractmethod
+    def body(self):  # type: () -> AddressSet
+        """The body of this object"""
+
+    def highlight(self, color=HIGHLIGHT_COLOR):  # type: (Color) -> None
+        """Highlight this instruction in the listing."""
+        self.body.highlight(color)
+
+    def unhighlight(self):  # type: () -> None
+        """Clear the highlight from this instruction."""
+        self.body.unhighlight()
 
 
 class HighVariable(GhidraWrapper):
@@ -1090,7 +1177,7 @@ class FlowType(GhidraWrapper):
         return self.raw.isOverride()
 
 
-class Instruction(GhidraWrapper):
+class Instruction(GhidraWrapper, BodyOperationsTrait):
     """Wraps a Ghidra Instruction object"""
 
     @staticmethod
@@ -1103,6 +1190,12 @@ class Instruction(GhidraWrapper):
         if raw is None:
             return None
         return Instruction(raw)
+
+    @staticmethod
+    def all():  # type: () -> list[Instruction]
+        """Get all instruction defined in the current program."""
+        raw_instructions = currentProgram.getListing().getInstructions(True)
+        return [Instruction(raw) for raw in raw_instructions]
 
     @property
     def mnemonic(self):  # type: () -> str
@@ -1135,8 +1228,13 @@ class Instruction(GhidraWrapper):
 
     @property
     def xrefs_from(self):  # type: () -> list[Reference]
-        """Get a list of references that point to this instruction."""
+        """Get a list of references from this instruction."""
         return [Reference(raw) for raw in self.raw.getReferencesFrom()]
+
+    @property
+    def to(self):  # type: () -> list[Reference]
+        """Get a list of references to this instruction."""
+        return [Reference(raw) for raw in self.raw.getReferencesTo()]
 
     def to_bytes(self):  # type: () -> str
         """Get the bytes of this instruction."""
@@ -1208,6 +1306,11 @@ class Instruction(GhidraWrapper):
         # TODO: wrap SourceType too, someday?
         self.raw.addOperandReference(op_ndx, resolve(ref_addr), ref_type.raw, src_type)
 
+    @property
+    def body(self):  # type: () -> AddressSet
+        """Get the address range this instruction."""
+        return AddressSet.create(self.address, self.length)
+
 
 class AddressRange(GhidraWrapper):
     """Wraps a Ghidra AddressRange object."""
@@ -1268,6 +1371,17 @@ class AddressRange(GhidraWrapper):
 class AddressSet(GhidraWrapper):
     """Wraps a Ghidra AddressSetView object."""
 
+    @staticmethod
+    def empty():  # type: () -> AddressSet
+        """Create a new empty address set"""
+        return AddressSet(GhAddressSet())
+
+    @staticmethod
+    def create(start, length):  # type: (Addr, int) -> AddressSet
+        """Create a new AddressSet with given address and length."""
+        addr = resolve(start)
+        return AddressSet(GhAddressSet(addr, addr.add(length - 1)))
+
     @property
     def addresses(self):  # type: () -> list[int]
         """Return the addresses in this set."""
@@ -1312,8 +1426,24 @@ class AddressSet(GhidraWrapper):
         """Computes the union of this set and the given set."""
         return AddressSet(self.raw.union(other.raw))
 
+    def __get_highlighter(self):  # type: () -> Any
+        tool = state.getTool()
+        service = tool.getService(ColorizingService)
+        if service is None:
+            raise RuntimeError("Cannot highlight without the ColorizingService")
+        return service
 
-class BasicBlock(AddressSet):
+    def highlight(self, color=HIGHLIGHT_COLOR):  # type: (Color) -> None
+        print(color.__class__)
+        service = self.__get_highlighter()
+        service.setBackgroundColor(self.raw, color)
+
+    def unhighlight(self):  # type: (Color) -> None
+        service = self.__get_highlighter()
+        service.clearBackgroundColor(self.raw)
+
+
+class BasicBlock(AddressSet, BodyOperationsTrait):
     """Wraps a Ghidra CodeBlock object"""
 
     @staticmethod
@@ -1345,19 +1475,6 @@ class BasicBlock(AddressSet):
         """Get a list of all basic blocks in the program."""
         block_model = SimpleBlockModel(currentProgram)
         return [BasicBlock(b) for b in block_model.getCodeBlocks(TaskMonitor.DUMMY)]
-
-    @staticmethod
-    def program_control_flow():  # type: () -> Graph[BasicBlock]
-        """Get a graph representing the whole program control flow.
-
-        This graph may be very big, so don't try to show it."""
-        g = Graph.create()
-        for block in BasicBlock.all():
-            g.vertex(block, str(block.address))
-        for block in BasicBlock.all():
-            for dest in block.destinations:
-                g.edge(block, dest)
-        return g
 
     @property
     def name(self):  # type: () -> str
@@ -1602,7 +1719,7 @@ class Parameter(Variable):
         return DataType(self.raw.getFormalDataType())
 
 
-class FunctionCall:
+class FunctionCall(BodyOperationsTrait):
     """Represents an abstract function call.
 
     Can be used to get the function being called and the parameters passed to it."""
@@ -1696,6 +1813,10 @@ class FunctionCall:
                 args.append(None)
         return args
 
+    @property
+    def body(self):
+        return self.instruction.body
+
 
 class ClangTokenGroup(GhidraWrapper):
     """Represents a group of clang tokens from a decompiler.
@@ -1733,7 +1854,7 @@ class ClangTokenGroup(GhidraWrapper):
         self._dump(self.raw)
 
 
-class Function(GhidraWrapper):
+class Function(GhidraWrapper, BodyOperationsTrait):
     """Wraps a Ghidra Function object."""
 
     UNDERLYING_CLASS = GhFunction
@@ -2081,12 +2202,12 @@ class Function(GhidraWrapper):
         In other words, get a graph that represents how the control flow
         can move between basic blocks in this function."""
         g = Graph.create()
-        for bb in self.basicblocks:
-            g.vertex(bb)
-        for bb in self.basicblocks:
-            for out in bb.destinations:
-                if out in g:
-                    g.edge(bb, out)
+        for block in self.basicblocks:
+            g.vertex(block)
+        for block in self.basicblocks:
+            for dest in block.destinations:
+                if dest in g:
+                    g.edge(block, dest)
         return g
 
 
@@ -2521,6 +2642,35 @@ class Program(GhidraWrapper):
                     continue
                 g.edge(func, out)
         return g
+
+    @staticmethod
+    def control_flow():  # type: () -> Graph[BasicBlock]
+        """Get a graph representing the whole program control flow.
+
+        Warning: This graph may be big, so don't try to display it."""
+        g = Graph.create()
+        for block in BasicBlock.all():
+            g.vertex(block, str(block.address))
+        for block in BasicBlock.all():
+            for dest in block.destinations:
+                if dest in g:
+                    g.edge(block, dest)
+        return g
+
+    @staticmethod
+    def basicblocks():  # type: () -> list[BasicBlock]
+        """Get all the basic blocks defined in the program."""
+        return BasicBlock.all()
+
+    @staticmethod
+    def functions():  # type: () -> list[Function]
+        """Get all the functions defined in the program."""
+        return Function.all()
+
+    @staticmethod
+    def instructions():  # type: () -> list[Instruction]
+        """Get all the instructions defined in the program."""
+        return Instruction.all()
 
 
 def to_bytestring(val):  # type: (str | list[int]) -> str

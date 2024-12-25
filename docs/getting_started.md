@@ -3,6 +3,10 @@
 This document contains an introduction to the most important objects
 wrapped by this library, and a few more motivational segments.
 
+If you prefer to learn by example, check out the [examples directory](https://github.com/msm-code/ghidralib/tree/master/examples),
+or the [tests](https://github.com/msm-code/ghidralib/blob/master/tests/ghidralib_test.py).
+For a more complete reference, see the [API documentation](reference.md).
+
 * [Main Actors](#main-actors) - description of the most important
 ghidralib objects
 * [Working at various abstraction levels](#working-at-various-abstraction-levels)
@@ -204,11 +208,15 @@ It is very detailed, to the level that it contains even whitespace.
 You can clean them up, but the data is still overprocessed a bit too much,
 and not useful (IMO) during analysis. Ghidra uses it for display.
 
-## Random features
+## Showcase
 
-I'll showcase a few more random features that you might find useful.
+In this section I'll present a few examples of impressive-but-not-necessarily-useful
+things you can do with ghidralib.
 
 ### Emulation
+
+Emulate the program from 0x400300 to 0x400400. When finished, read the value of `eax`
+and the memory at 0x401000.
 
 ```python
 emu = Emulator()
@@ -216,6 +224,9 @@ emu.emulate(0x400300, 0x400300 + 0x100)
 print(emu["eax"])
 print(emu.read_memory(0x401000, 16))
 ```
+
+In practice you can often use this for recovering obfuscated strings, or unpacking
+simple packers.
 
 ### Graphs
 
@@ -239,15 +250,27 @@ g.edge(foo, bar)
 g.show()
 ```
 
-Or do some actually useful stuff with graph algorithms:
+Or you can do some actually useful things with included graph algorithms
+(DFS, BFS, and topological sort) - like tracing paths between functions.
+
+### Path finding
+
+Find the shortest path from source to target in the control flow graph.
+If it exists, highlight all basic blocks along the way.
 
 ```python
-def callback(func):
-    print("visiting", func)
-
-# Traverse the program functions in topological order, and print the function names.
-Program.call_graph.dfs(callback)
+source = BasicBlock("entry")
+target = BasicBlock(0x00405073)
+bfs = Program.control_flow().bfs(source)
+while bfs.get(target):
+    target.highlight()
+    target = bfs[target]
 ```
+
+![](./colorblock.png)
+
+You can highlight anything that has an address (like a basic block, function,
+or a single instruction). Call .unhighlight() to clear the highlight.
 
 ## Conventions
 
