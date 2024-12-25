@@ -63,11 +63,13 @@
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#working-at-various-abstraction-levels">Working at various abstraction levels</a>
     </li>
-    <li class="toctree-l2"><a class="reference internal" href="#random-features">Random features</a>
+    <li class="toctree-l2"><a class="reference internal" href="#showcase">Showcase</a>
         <ul>
     <li class="toctree-l3"><a class="reference internal" href="#emulation">Emulation</a>
     </li>
     <li class="toctree-l3"><a class="reference internal" href="#graphs">Graphs</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#path-finding">Path finding</a>
     </li>
         </ul>
     </li>
@@ -108,6 +110,9 @@
                 <h1 id="getting-started">Getting Started</h1>
 <p>This document contains an introduction to the most important objects
 wrapped by this library, and a few more motivational segments.</p>
+<p>If you prefer to learn by example, check out the <a href="https://github.com/msm-code/ghidralib/tree/master/examples">examples directory</a>,
+or the <a href="https://github.com/msm-code/ghidralib/blob/master/tests/ghidralib_test.py">tests</a>.
+For a more complete reference, see the <a href="../reference/">API documentation</a>.</p>
 <ul>
 <li><a href="#main-actors">Main Actors</a> - description of the most important
 ghidralib objects</li>
@@ -293,14 +298,19 @@ You can clean them up, but the data is still overprocessed a bit too much,
 and not useful (IMO) during analysis. Ghidra uses it for display.</p>
 </li>
 </ul>
-<h2 id="random-features">Random features</h2>
-<p>I'll showcase a few more random features that you might find useful.</p>
+<h2 id="showcase">Showcase</h2>
+<p>In this section I'll present a few examples of impressive-but-not-necessarily-useful
+things you can do with ghidralib.</p>
 <h3 id="emulation">Emulation</h3>
+<p>Emulate the program from 0x400300 to 0x400400. When finished, read the value of <code>eax</code>
+and the memory at 0x401000.</p>
 <pre><code class="language-python">emu = Emulator()
 emu.emulate(0x400300, 0x400300 + 0x100)
 print(emu[&quot;eax&quot;])
 print(emu.read_memory(0x401000, 16))
 </code></pre>
+<p>In practice you can often use this for recovering obfuscated strings, or unpacking
+simple packers.</p>
 <h3 id="graphs">Graphs</h3>
 <pre><code class="language-python"># Get the control flow graph of the main function (and display it)
 Function(&quot;main&quot;).control_flow.show()
@@ -315,13 +325,21 @@ bar = g.vertex(&quot;bar&quot;)
 g.edge(foo, bar)
 g.show()
 </code></pre>
-<p>Or do some actually useful stuff with graph algorithms:</p>
-<pre><code class="language-python">def callback(func):
-    print(&quot;visiting&quot;, func)
-
-# Traverse the program functions in topological order, and print the function names.
-Program.call_graph.dfs(callback)
+<p>Or you can do some actually useful things with included graph algorithms
+(DFS, BFS, and topological sort) - like tracing paths between functions.</p>
+<h3 id="path-finding">Path finding</h3>
+<p>Find the shortest path from source to target in the control flow graph.
+If it exists, highlight all basic blocks along the way.</p>
+<pre><code class="language-python">source = BasicBlock(&quot;entry&quot;)
+target = BasicBlock(0x00405073)
+bfs = Program.control_flow().bfs(source)
+while bfs.get(target):
+    target.highlight()
+    target = bfs[target]
 </code></pre>
+<p><img alt="" src="../colorblock.png" /></p>
+<p>You can highlight anything that has an address (like a basic block, function,
+or a single instruction). Call .unhighlight() to clear the highlight.</p>
 <h2 id="conventions">Conventions</h2>
 <p>There are a few conventions that this library follows, and which may be useful
 when learning:</p>
