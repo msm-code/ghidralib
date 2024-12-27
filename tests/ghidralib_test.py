@@ -4,17 +4,126 @@ from ghidralib import *
 # Run tests on 44573a7526d5053a28d4e3e70c6ad8adf8eec148d8fe81302140b6bb3df179c0
 
 
-# TODO java utils
-# TODO Graph
-# TODO HighVariable
-# TODO HighSymbol
-# TODO Register
-# TODO Varnode
+###############################################################
+# Test Graph
+###############################################################
+
+
+def test_graph():
+    graph = Graph.create("name", "description")
+    graph.vertex(1)
+    graph.vertex(2)
+    graph.edge(1, 2)
+    assert 1 in graph
+    assert graph.has_vertex(1)
+    assert 1 in graph.vertices
+    assert len(graph) == 2
+    assert len(graph.vertices) == 2
+    assert graph.vertex_count == 2
+    assert len(graph.edges) == 1
+    assert graph.edge_count == 1
+
+    assert graph.name == "name"
+    assert graph.description == "description"
+
+    assert graph.dfs(1) == {1: None, 2: 1}
+    assert graph.bfs(1) == {1: None, 2: 1}
+    assert graph.toposort(1) == [2, 1]
+
+
+###############################################################
+# Test HighVariable
+###############################################################
+
+
+def test_high_variable():
+    func = Function("entry").high_function
+    assert len(func.variables) > 0
+
+    var = func.variables[0]
+    assert var.size > 0
+    assert var.name is not None
+    assert var.data_type is not None
+    assert var.symbol is not None
+    assert len(var.varnodes) > 0
+    assert var.varnode is not None
+
+    _ = var.is_addr_tied
+    _ = var.is_free
+    _ = var.is_input
+    _ = var.is_persistent
+    _ = var.is_unaffected
+
+
+###############################################################
+# Test HighSymbol
+###############################################################
+
+
+def test_high_symbol():
+    func = Function("entry").high_function
+    assert len(func.symbols) > 0
+
+    sym = func.symbols[0]
+    assert sym.size > 0
+    assert sym.data_type is not None
+    _ = sym.variable  # this may be none
+    assert sym.name is not None
+    _ = sym.symbol  # may be none
+    assert not sym.is_this_pointer
+
+
+###############################################################
+# Test register
+###############################################################
+
+
+def test_register():
+    assert Register.get("eax") is not None
+    assert Register("eax").name == "EAX"
+
+
+###############################################################
+# Test Varnode
+###############################################################
+
+
+def test_varnode():
+    func = Function("entry")
+    assert len(func.varnodes) > 0
+    vn = func.varnodes[0]
+
+    if vn.has_value:
+        assert vn.value is not None
+    _ = vn.offset
+    _ = vn.size
+    # _ = vn.high
+    # _ = vn.symbol
+
+    _ = vn.is_constant
+    _ = vn.is_register
+    if vn.is_register:
+        assert vn.as_register is not None
+    _ = vn.is_address
+    _ = vn.is_unique
+    _ = vn.is_hash
+    _ = vn.is_unaffected
+    _ = vn.is_persistent
+    _ = vn.is_addr_tied
+    _ = vn.is_input
+    _ = vn.is_free
+    # _ = vn.defining_pcodeop
+    _ = vn.descendants
+
+    assert isinstance(vn.simple, (str, unicode, int))
+    assert vn.free.is_free
+
+
 # TODO PcodeBlock
 # TODO BlockGraph
 
 ###############################################################
-# Test high function
+# Test HighFunction
 ###############################################################
 
 
@@ -45,7 +154,7 @@ def test_high_function():
 
 
 ###############################################################
-# Test instruction
+# Test Instruction
 ###############################################################
 
 
@@ -88,7 +197,7 @@ def test_instruction():
 # TODO AddressSet
 
 ###############################################################
-# Test basic block
+# Test BasicBlock
 ###############################################################
 
 
@@ -98,15 +207,15 @@ def test_basic_block():
 
     block = BasicBlock(0x004043D9)
     assert block == BasicBlock.get(0x004043D9)
-    assert block == BasicBlock.get("FUN_004043D9")
-    assert block == BasicBlock.get(toAddr(0x00406831))
+    assert block == BasicBlock.get("FUN_004043d9")
+    assert block == BasicBlock.get(toAddr(0x004043D9))
     assert block == BasicBlock.get(block.raw)
 
     assert block in Function(0x004043D9).basicblocks
 
     assert block.address == 0x004043D9
     assert block.start_address == 0x004043D9
-    assert block.end_address == 0x004043F6
+    assert block.end_address == 0x004043F8
 
     assert len(block.instructions) > 0
     assert len(block.pcode) > 0
@@ -115,13 +224,13 @@ def test_basic_block():
     assert block.address in block.body
 
     assert len(BasicBlock.all()) > 10
-    assert len(BasicBlock.program_control_flow()) > 10
+    assert len(Program.control_flow()) > 10
 
     assert block.flow_type is not None
 
 
 ###############################################################
-# Test variable
+# Test Variable
 ###############################################################
 
 
@@ -137,7 +246,6 @@ def test_variable():
     assert var.name is not None
     org_name = var.name
     var.rename(org_name + "fun")
-    print(var.name)
     assert var.name == org_name + "fun"
     var.rename(org_name)
 
@@ -172,13 +280,14 @@ def test_variable():
 
     assert var.symbol is not None
     assert len(var.varnodes) > 0
+    assert var.varnodes[0].raw
 
     if var.is_register:
         assert var.register is not None
 
 
 ###############################################################
-# Test parameter
+# Test Parameter
 ###############################################################
 
 
@@ -193,7 +302,7 @@ def test_parameter():
 
 
 ###############################################################
-# Test function call
+# Test FunctionCall
 ###############################################################
 
 
@@ -217,8 +326,10 @@ def test_function_call():
     assert call.caller == call.calling_function
 
     assert call.high_pcodeop is not None
+    assert call.high_pcodeop.raw
     assert len(call.high_pcodeop.inputs) > 1
     assert len(call.high_varnodes) > 0
+    assert call.high_varnodes[0].raw
     assert len(call.get_args()) > 0
 
     assert call.instruction.mnemonic == "CALL"
@@ -228,7 +339,7 @@ def test_function_call():
 
 
 ###############################################################
-# Test function
+# Test Function
 ###############################################################
 
 
@@ -265,19 +376,26 @@ def test_function():
 
     assert len(func.parameters) == 0
     assert len(func.local_variables) > 3
+    assert func.local_variables[0].raw
     assert len(func.variables) > 3
+    assert func.variables[0].raw
     assert len(func.varnodes) > 3
+    assert func.varnodes[0].raw
     assert len(func.high_variables) > 3
+    assert func.high_variables[0].raw
     assert len(func.stack) > 1
+    assert func.stack[0].raw
 
     func.rename("test")
     assert func.name == "test"
     func.rename("entry")
 
     assert len(func.xrefs) > 0
+    assert func.xrefs[0].raw
     assert len(func.xref_addrs) > 0
     assert len(func.callers) == 0
     assert len(func.called) > 3
+    assert func.called[0].raw
     assert len(func.calls) == 0
 
     func.fixup = "x"
@@ -286,26 +404,35 @@ def test_function():
     assert func.fixup is None
 
     assert len(func.basicblocks) > 3
+    assert func.basicblocks[0].raw
     assert len(func.decompile()) > 100
 
     assert func.high_function is not None
+    assert func.high_function.raw
     assert len(func.get_high_pcode()) > 10
     assert len(func.high_pcode) > 10
+    assert func.high_pcode[0].raw
 
     assert func.pcode_tree is not None
 
     assert len(func.pcode) > 10
-    assert len(func.high_pcode) > 10
+    assert func.pcode[0].raw
     assert len(func.high_basicblocks) > 10
+    assert func.high_basicblocks[0].raw
 
     func.get_high_pcode_at(func.entrypoint)
 
     assert len(func.high_symbols) > 0
+    assert func.high_symbols[0].raw
     assert len(func.primary_symbols) > 0
+    assert func.primary_symbols[0].raw
     assert len(func.symbols) > 0
+    assert func.symbols[0].raw
     assert not func.body.is_empty
+    assert func.body.raw
 
     assert func.control_flow is not None
+    assert func.control_flow.raw
 
 
 ###############################################################
@@ -377,7 +504,6 @@ def test_emulator():
     emu.write_memory(0x403ECB, "\x90\x90\x90\x90\x90")
     assert emu.read_memory(0x403ECB, 5) == "\x90\x90\x90\x90\x90"
     emu.emulate(0x403ECB, 0x403ED0)
-
     # assert emu["esi"] == 0
     # Uhh, looks like Ghidra emulator doesn't support self-modifying code yet.
     # Apparently we're now in a transitional period, and I think we could
@@ -385,6 +511,23 @@ def test_emulator():
 
     emu.write_register("esi", 1)
     assert emu.read_register("esi") == 1
+
+    emu.write_memory(0x400000, "\x01\x02\x03\x04\x05\x06\x07\x08")
+    assert emu.read_u8(0x400000) == 0x01
+    assert emu.read_u16(0x400000) == 0x0201
+    assert emu.read_u32(0x400000) == 0x04030201
+    assert emu.read_u64(0x400000) == 0x0807060504030201
+
+    emu.write_u8(0x400000, 0x01)
+    assert emu.read_u8(0x400000) == 0x01
+    emu.write_u16(0x400000, 0x0201)
+    assert emu.read_u16(0x400000) == 0x0201
+    emu.write_u32(0x400000, 0x04030201)
+    assert emu.read_u32(0x400000) == 0x04030201
+    emu.write_u64(0x400000, 0x0807060504030201)
+    assert emu.read_u64(0x400000) == 0x0807060504030201
+
+    assert emu.read_memory(0x400000, 8) == "\x01\x02\x03\x04\x05\x06\x07\x08"
 
 
 ###############################################################
@@ -413,6 +556,8 @@ def test_util():
     assert disassemble(data)[0].mnemonic == "CALL"
 
     assert from_bytes([0x01, 0x02]) == 0x0201
+    assert to_bytes(0x0201, 2) == "\x01\x02"
+    assert to_bytes(0x0201, 4) == "\x01\x02\x00\x00"
     assert unhex("0102") == "\x01\x02"
     assert enhex("\x01\x02") == "0102"
     assert xor("\x01\x02", "\x03\x04") == "\x02\x06"
@@ -424,21 +569,7 @@ def test_util():
 
 
 def run():
-    test_names = [
-        "test_high_function",
-        # "test_variable",
-        # "test_parameter",
-        # "test_instruction",
-        "test_basic_block",
-        # "test_function_call",
-        # "test_function",
-        # "test_symbol",
-        # "test_datatype",
-        # "test_emulator",
-        # "test_program",
-        # "test_util"
-    ]
-    for f in test_names:
+    for f in globals():
         if f.startswith("test_"):
             print("Running {}...".format(f))
             globals()[f]()

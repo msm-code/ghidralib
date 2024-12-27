@@ -35,6 +35,10 @@ A lot of objects are wrapped by this library. The most important at the beginnin
 
 ### Function
 
+A function is a named block of code. Not all code in Ghidra belongs to a function,
+but being in a function makes it easier to reason about - for example,
+we can talk about parameters, variables, return values, etc.
+
 Check these usage examples:
 
 ```python
@@ -81,7 +85,7 @@ Function.create(0x400300, "main")
 # Print a value of eax and edx at each call of this function
 for call in Function("MyCustomCrypto").calls:
     ctx = call.emulate()
-    key, data = ctx.read_register("eax"), ctx.read_register("edx")
+    key, data = ctx["eax"], ctx["edx"]
     print(key, data)
 
 # Print parameters of each call to this function, as seen by
@@ -94,6 +98,10 @@ for call in Function("MyCustomCrypto").calls:
 Read more in the [`Function` object documentation](reference.md#ghidralib.Function).
 
 ### Instruction
+
+Instructions represent a single assembly operation.
+They have a mnemonic (e.g. `mov`), operands (e.g. `eax, 3`),
+and a pcode representation used for further analysis.
 
 Check these usage examples:
 
@@ -121,6 +129,9 @@ Read more in the [`Instruction` object documentation](reference.md#ghidralib.Ins
 
 ### DataType
 
+Data types are used to describe the structure of data in memory.
+
+
 Check these usage examples:
 
 ```python
@@ -132,6 +143,9 @@ HINTERNET = DataType.from_c('typedef void* HINTERNET;')
 
 # Change a datatype at location
 create_data(0x1234, HINTERNET)
+
+# You can also create structures from C code strings:
+foo = DataType.from_c('struct foo { int a; int b; };')
 ```
 
 Read more in the [`DataType` object documentation](reference.md#ghidralib.DataType).
@@ -186,22 +200,22 @@ architecture-independent [Varnodes](reference.md#ghidralib.Varnode) now instead.
 You stil work with [PcodeOps](reference.md#ghidralib.PcodeOp), but they are
 significantly transformed - referred as "High Pcode" in this library.
 You now think in terms of [High Functions](reference.md#ghidralib.HighFunction),
-[High Variables](reference.md#ghidralib.HighVariable),
-[High Symbols](reference.md#ghidralib.HighSymbol), and
-[High Varnodes](reference.md#ghidralib.HighVarnode).
+[High Variables](reference.md#ghidralib.HighVariable), and
+[High Symbols](reference.md#ghidralib.HighSymbol).
 Even [Varnodes](reference.md#ghidralib.Varnode) are now slightly more powerful
 (under the hood they are `VarnodeASTs` now).
 
 * **Pcode syntax tree** (`Function.pcode_tree`) -
-As far as I know, not many people know how to work with it in Ghidra - though
-ghidralib makes this much easier than it was before. At
+As far as I know, there was no easy way to work with it. I hope ghidralib makes
+this much easier. On
 this level, you still have high [PcodeOps](reference.md#ghidralib.PcodeOp), but
 syntactic elements like "dowhile" loops, "if" statements etc, are now recovered
 and you can traverse the syntax tree (while still dealing with
 [PcodeOps](reference.md#ghidralib.PcodeOp)).
 
-* C abstract syntax tree (AST) - not supported by Ghidra. I hope one day
-to find a way to reverse-engineer it, but for now we have to live without it.
+* C abstract syntax tree (AST) - built internally by the decompiler, but not exported
+by Ghidra. I hope to add support for it in ghidralib one way or another,
+but for now there is no way to access it.
 
 * **Clang tokens** (`Function.tokens`) - a stream of tokens that represent the C code.
 It is very detailed, to the level that it contains even whitespace.

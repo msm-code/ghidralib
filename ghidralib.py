@@ -42,10 +42,8 @@ from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
 from ghidra.app.emulator import EmulatorHelper
 from ghidra.app.plugin.core.colorizer import ColorizingService
-from ghidra.app.util.viewer.field import ListingColors
 from ghidra.app.util import SearchConstants
 from java.awt import Color
-from jarray import array
 from __main__ import (
     toAddr,
     createFunction,
@@ -294,7 +292,7 @@ class Graph(GenericT, GhidraWrapper):
         name = name or "Graph"
         description = description or "Graph"
         graphtype = GraphType(name, description, [], [])
-        return Graph(AttributedGraph(name, graphtype))
+        return Graph(AttributedGraph(name, graphtype, description))
 
     def __contains__(self, vtx):  # type: (T) -> bool
         """Check if a given vertex exists in this graph.
@@ -341,7 +339,7 @@ class Graph(GenericT, GhidraWrapper):
 
         Warning: this constructs the list every time, so it's not a light operation.
         Use vertex_count for counting."""
-        return [self.data.get(vid, vid) for vid in self.raw.vertexSet()]
+        return [self.__resolve(vid.getId()) for vid in self.raw.vertexSet()]
 
     @property
     def vertex_count(self):  # type: () -> int
@@ -379,6 +377,11 @@ class Graph(GenericT, GhidraWrapper):
         """Return the name of this graph."""
         return self.raw.getName()
 
+    @property
+    def description(self):  # type: () -> str
+        """Return the description of this graph."""
+        return self.raw.getDescription()
+
     def show(self):  # type: () -> None
         """Display this graph in the Ghidra GUI."""
         graphtype = self.raw.getGraphType()
@@ -392,7 +395,7 @@ class Graph(GenericT, GhidraWrapper):
     def __resolve(self, vid):  # type: (str) -> T
         """Resolve a vertex ID to a vertex object.
 
-        :param id: The ID of the vertex to resolve."""
+        :param vid: The ID of the vertex to resolve."""
         if vid in self.data:
             return self.data[vid]
         else:
@@ -405,7 +408,7 @@ class Graph(GenericT, GhidraWrapper):
 
         Warning: This won't reach every node in the graph, if it's not connected.
 
-        :param start: The ID of the vertex to start the search from.
+        :param origin: The ID of the vertex to start the search from.
         :param callback: A callback function to call for each vertex visited.
         :returns: A dictionary of parent vertices for each visited vertex.
         """
@@ -460,7 +463,7 @@ class Graph(GenericT, GhidraWrapper):
         """Perform a breadth-first search on this graph, starting from the given vertex.
 
         Warning: This won't reach every node in the graph, if it's not connected.
-        :param start: The ID of the vertex to start the search from.
+        :param origin: The ID of the vertex to start the search from.
         :param callback: A callback function to call for each vertex visited.
         """
         tovisit = [(None, get_unique_string(origin))]
@@ -479,7 +482,7 @@ class Graph(GenericT, GhidraWrapper):
         return parents
 
 
-class BodyOperationsTrait:
+class BodyTrait:
     """A trait for objects that have a body.
 
     It provides generic methods that work with anything that has a body
@@ -507,6 +510,11 @@ class HighVariable(GhidraWrapper):
     def rename(self, new_name):  # type: (str) -> None
         """Rename this high variable."""
         self.symbol.rename(new_name)
+
+    @property
+    def size(self):  # type: () -> int
+        """Return the size of this variable in bytes"""
+        return self.raw.getSize()
 
     @property
     def data_type(self):  # type: () -> DataType
@@ -590,6 +598,19 @@ class HighSymbol(GhidraWrapper):
         """Return the name of this symbol"""
         return self.raw.getName()
 
+    @property
+    def symbol(self):  # type: () -> Symbol|None
+        """Get the corresponding symbol, if it exists."""
+        raw = self.raw.getSymbol()
+        if raw is None:
+            return None
+        return Symbol(raw)
+
+    @property
+    def is_this_pointer(self):  # type: () -> bool
+        """Return True if this symbol is a "this" pointer for a class"""
+        return self.raw.isThisPointer()
+
 
 class Register(GhidraWrapper):
     @staticmethod
@@ -645,23 +666,36 @@ class Varnode(GhidraWrapper):
 
     @property
     def is_register(self):  # type: () -> bool
-        if not self.raw.isRegister():
-            return False
-        # For some reason isRegister will lie to us.
-        # Or at least getRegister may fail.
+        """Return True if this varnode is stored entirely in a register.
+
+        Warning: this does not mean that it can be cast to a register! This may
+        be, for example, upper 32 bits of RAX. Use is_named_register instead."""
+        return self.raw.isRegister()
+
+    @property
+    def is_named_register(self):  # type: () -> bool
+        """ "Return True if this varnode is stored entirely in a named register.
+
+        "Named" in this context means that it has a conventional name, like RAX.
+        Not all register varnodes are named, for example, the upper 32 bits of RAX
+        have no commonly used name."""
         language = currentProgram.getLanguage()
         raw = language.getRegister(self.raw.getAddress(), self.size)
         return raw is not None
 
     @property
-    def is_address(self):  # type: () -> bool
-        return self.raw.isAddress()
-
-    @property
     def as_register(self):  # type: () -> str
+        """Return the name of the register this varnode is stored in.
+
+        Warning: even if is_register returns true, this does not mean you can use
+        this method safely. Use is_named_register to make sure."""
         language = currentProgram.getLanguage()
         raw = language.getRegister(self.raw.getAddress(), self.size)
         return raw.getName()
+
+    @property
+    def is_address(self):  # type: () -> bool
+        return self.raw.isAddress()
 
     @property
     def is_unique(self):  # type: () -> bool
@@ -727,6 +761,8 @@ class Varnode(GhidraWrapper):
     @property
     def descendants(self):  # type: () -> list[PcodeOp]
         """Return a list of all descendants of this varnode"""
+        if self.raw.getDescendants() is None:
+            return []
         return [PcodeOp(x) for x in self.raw.getDescendants()]
 
 
@@ -925,7 +961,9 @@ class HighFunction(GhidraWrapper):
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
-        """Get a list of all high PcodeOps in this function."""
+        """Get a list of all high PcodeOps in this function.
+
+        Note: high PcodeOps are called PcodeOpAST internally."""
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps()]
 
     @property
@@ -1177,7 +1215,7 @@ class FlowType(GhidraWrapper):
         return self.raw.isOverride()
 
 
-class Instruction(GhidraWrapper, BodyOperationsTrait):
+class Instruction(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Instruction object"""
 
     @staticmethod
@@ -1434,7 +1472,6 @@ class AddressSet(GhidraWrapper):
         return service
 
     def highlight(self, color=HIGHLIGHT_COLOR):  # type: (Color) -> None
-        print(color.__class__)
         service = self.__get_highlighter()
         service.setBackgroundColor(self.raw, color)
 
@@ -1443,7 +1480,7 @@ class AddressSet(GhidraWrapper):
         service.clearBackgroundColor(self.raw)
 
 
-class BasicBlock(AddressSet, BodyOperationsTrait):
+class BasicBlock(AddressSet, BodyTrait):
     """Wraps a Ghidra CodeBlock object"""
 
     @staticmethod
@@ -1682,7 +1719,7 @@ class Variable(GhidraWrapper):
     def varnodes(self):  # type: () -> list[Varnode]
         """Get all varnodes associated with this variable."""
         storage = self.raw.getVariableStorage()
-        return list(storage.getVarnodes())
+        return [Varnode(x) for x in storage.getVarnodes()]
 
     @property
     def is_register(self):  # type: () -> bool
@@ -1719,7 +1756,7 @@ class Parameter(Variable):
         return DataType(self.raw.getFormalDataType())
 
 
-class FunctionCall(BodyOperationsTrait):
+class FunctionCall(BodyTrait):
     """Represents an abstract function call.
 
     Can be used to get the function being called and the parameters passed to it."""
@@ -1745,7 +1782,15 @@ class FunctionCall(BodyOperationsTrait):
         return self.called_function
 
     def emulate(self):  # type: () -> Emulator
-        """Emulate the basic block of this function call, and return the state"""
+        """Emulate the basic block of this function call, and return the state
+        
+        This is emulating a setup to the function (recovers the parameters),
+        NOT the function call itself. If you want to emulate the function
+        call, create a new Emulator object, set the appropriate registers/memory,
+        and call .emulate(start, end) on it.
+
+        TODO for the future - implement an easy way to emulate the call.
+        """
         basicblock = BasicBlock(self.address)
         emu = Emulator()
         emu.emulate(basicblock.start_address, self.address)
@@ -1854,7 +1899,7 @@ class ClangTokenGroup(GhidraWrapper):
         self._dump(self.raw)
 
 
-class Function(GhidraWrapper, BodyOperationsTrait):
+class Function(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Function object."""
 
     UNDERLYING_CLASS = GhFunction
@@ -1991,7 +2036,6 @@ class Function(GhidraWrapper, BodyOperationsTrait):
         varnodes = []
         for var in self.variables:
             varnodes.extend(var.varnodes)
-        # TODO: deduplication?
         return varnodes
 
     @property
@@ -2090,7 +2134,8 @@ class Function(GhidraWrapper, BodyOperationsTrait):
         decompiled = self._decompile()
         return decompiled.getDecompiledFunction().getC()
 
-    def tokens(self):  # type: () -> ClangTokenGroup
+    @property
+    def clang_tokens(self):  # type: () -> ClangTokenGroup
         """Get clang tokens for the decompiled function.
 
         This returns a ClangTokenGroup object. TODO: wrap the return value."""
@@ -2190,7 +2235,7 @@ class Function(GhidraWrapper, BodyOperationsTrait):
         for rng in body:
             for addr in rng:
                 symbols.extend(symtable.getSymbols(addr))
-        return symbols
+        return [Symbol(raw) for raw in symbols]
 
     @property
     def body(self):  # type: () -> AddressSet
@@ -2362,7 +2407,8 @@ class DataType(GhidraWrapper):
         """Get the length of this data type in bytes
 
         >>> DataType('int').length()
-        4"""
+        4
+        """
         return self.raw.getLength()
 
     __len__ = length
@@ -2376,6 +2422,14 @@ class DataType(GhidraWrapper):
 
             >>> DataType.from_c('typedef void* HINTERNET;')
             HINTERNET
+            >>> DataType.from_c("struct test { short a; short b; short c;};")
+            pack()
+            Structure test {
+            0   short   2   a   ""
+            2   short   2   b   ""
+            4   short   2   c   ""
+            }
+            Length: 6 Alignment: 2
 
         :param c_code: the C structure definition
         :param insert: if True, add the data type to the current program
@@ -2411,55 +2465,26 @@ class Emulator(GhidraWrapper):
         pc = self.raw.getPCRegister()
         self.raw.writeRegister(pc, address)
 
-    def __getitem__(self, reg_or_addr):  # type: (Reg|int) -> int
-        """Read the register or a single byte of the emulated program.
+    def __getitem__(self, reg):  # type: (Reg|int) -> int
+        """Read the register of the emulated program.
 
             >>> emulator.write_register("eax", 1337)
             >>> emulator["eax"]
             1337
-            >>> emulator.write_memory(0x1000, "A")
-            >>> emulator[0x1000]
-            65
 
-        Warning: if speed matters, don't read byte by byte using this
-        method, use read_memory instead.
+        :param reg: the register or address to read from"""
+        return self.read_register(reg)
 
-        :param reg_or_addr: the register or address to read from"""
-        if isinstance(reg_or_addr, (int, long)):
-            return ord(self.read_memory(reg_or_addr, 1))
-        elif isinstance(reg_or_addr, Str):
-            return self.read_register(reg_or_addr)
-        else:
-            raise TypeError("Invalid type for reg_or_addr")
-
-    def __setitem__(self, reg_or_addr, value):  # type: (Reg|int, int|str) -> None
-        """Write to the register or memory of the emulated program.
+    def __setitem__(self, reg, value):  # type: (Reg, int) -> None
+        """Write to the register of the emulated program.
 
             >>> emulator["eax"] = 1234
             >>> emulator.read_register("eax")
             1337
-            >>> emulator[0x1000] = "ABC"
-            >>> emulator.read_memory(0x1001, 1)
-            66
-            >>> emulator[0x1000] = 123
-            >>> emulator.read_memory(0x1000, 1)
-            123
 
-        Warning: if speed matters, don't read byte by byte using this
-        method, use read_memory instead.
-
-        :param reg_or_addr: the register or address to write to
+        :param reg: the register to write to
         :param value: the value to write"""
-        if isinstance(reg_or_addr, (int, long)):
-            if isinstance(value, Str):
-                self.write_memory(reg_or_addr, value)
-            else:
-                assert -127 <= value < 256  # <3 signed bytes
-                value = value % 256
-                self.write_memory(reg_or_addr, chr(value))
-        elif isinstance(reg_or_addr, Str):
-            assert isinstance(value, (int, long))
-            self.write_register(reg_or_addr, value)
+        self.write_register(reg, value)
 
     def read_register(self, reg):  # type: (Reg) -> int
         """Read from the register of the emulated program.
@@ -2470,17 +2495,6 @@ class Emulator(GhidraWrapper):
 
         :param reg: the register to read from."""
         return self.raw.readRegister(reg)
-
-    def write_register(self, reg, value):  # type: (Reg, int) -> None
-        """Write to the register of the emulated program.
-
-            >>> emulator.write_register("eax", 1)
-            >>> emulator.read_register("eax")
-            1
-
-        :param reg: the register to write to
-        :param value: the value to write"""
-        self.raw.writeRegister(reg, value)
 
     def get_bytes(self, address, length):  # type: (Addr, int) -> str
         """An alias for `read_memory`.
@@ -2496,6 +2510,57 @@ class Emulator(GhidraWrapper):
 
     read_memory = get_bytes
 
+    def read_u8(self, address):  # type: (Addr) -> int
+        """Read a byte from the emulated program.
+
+            >>> emulator.write_u8(0x1000, 13)
+            >>> emulator.read_u8(0x1000)
+            13
+
+        :param address: the address to read from"""
+        return from_bytes(self.read_memory(address, 1))
+
+    def read_u16(self, address):  # type: (Addr) -> int
+        """Read a 16bit unsigned integer from the emulated program.
+
+            >>> emulator.write_u16(0x1000, 123)
+            >>> emulator.read_u16(0x1000)
+            123
+
+        :param address: the address to read from"""
+        return from_bytes(self.read_memory(address, 2))
+
+    def read_u32(self, address):  # type: (Addr) -> int
+        """Read a 32bit unsigned integer from the emulated program.
+
+            >>> emulator.write_u32(0x1000, 123)
+            >>> emulator.read_u32(0x1000)
+            123
+
+        :param address: the address to read from"""
+        return from_bytes(self.read_memory(address, 4))
+
+    def read_u64(self, address):  # type: (Addr) -> int
+        """Read a 64bit unsigned integer from the emulated program.
+
+            >>> emulator.write_u64(0x1000, 123)
+            >>> emulator.read_u64(0x1000)
+            123
+
+        :param address: the address to read from"""
+        return from_bytes(self.read_memory(address, 8))
+
+    def write_register(self, reg, value):  # type: (Reg, int) -> None
+        """Write to the register of the emulated program.
+
+            >>> emulator.write_register("eax", 1)
+            >>> emulator.read_register("eax")
+            1
+
+        :param reg: the register to write to
+        :param value: the value to write"""
+        self.raw.writeRegister(reg, value)
+
     def write_memory(self, address, value):  # type: (Addr, str) -> None
         """Write to the memory of the emulated program.
 
@@ -2506,6 +2571,50 @@ class Emulator(GhidraWrapper):
         :param address: the address to write to
         :param value: the value to write"""
         self.raw.writeMemory(resolve(address), value)
+
+    def write_u8(self, address, value):  # type: (Addr, int) -> None
+        """Write a byte to the emulated program.
+
+            >>> emulator.write_u8(0x1000, 13)
+            >>> emulator.read_u8(0x1000)
+            13
+
+        :param address: the address to write to"""
+        assert 0 <= value < 2**8, "value out of range"
+        self.write_memory(address, chr(value))
+
+    def write_u16(self, address, value):  # type: (Addr, int) -> None
+        """Write a 16bit unsigned integer to the emulated program.
+
+            >>> emulator.write_u16(0x1000, 13)
+            >>> emulator.read_u16(0x1000)
+            13
+
+        :param address: the address to write to"""
+        assert 0 <= value < 2**16, "value out of range"
+        self.write_memory(address, to_bytes(value, 2))
+
+    def write_u32(self, address, value):  # type: (Addr, int) -> None
+        """Write a 32bit unsigned integer to the emulated program.
+
+            >>> emulator.write_u32(0x1000, 13)
+            >>> emulator.read_u32(0x1000)
+            13
+
+        :param address: the address to write to"""
+        assert 0 <= value < 2**32, "value out of range"
+        self.write_memory(address, to_bytes(value, 4))
+
+    def write_u64(self, address, value):  # type: (Addr, int) -> None
+        """Write a 64bit unsigned integer to the emulated program.
+
+            >>> emulator.write_u64(0x1000, 13)
+            >>> emulator.read_u64(0x1000)
+            13
+
+        :param address: the address to write to"""
+        assert 0 <= value < 2**64, "value out of range"
+        self.write_memory(address, to_bytes(value, 8))
 
     def emulate(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
         """Emulate from start to end address.
@@ -2559,28 +2668,41 @@ class Emulator(GhidraWrapper):
             return self.raw.readRegister(reg)
         raise RuntimeError("Unsupported varnode type")
 
-    def trace_pcode(
-        self, start, end, callback
-    ):  # type: (Addr, Addr, Callable[[PcodeOp], None]) -> None
-        """Emulate from start to end address, with callback for each executed PcodeOp.
+    def trace(
+        self, start, end, callback, maxsteps=2**48
+    ):  # type: (Addr, Addr, Callable[[Instruction], None], int) -> None
+        """Emulate from start to end address, with callback for each executed Instruction.
 
         :param start: the start address to emulate
         :param end: the end address to emulate
-        :param callback: the callback to call for each executed Pcode"""
+        :param callback: the callback to call for each executed instruction"""
         self.set_pc(start)
         current = resolve(start)
         end = resolve(end)
-        while current != end:
+        while current != end and maxsteps > 0:
             success = self.raw.step(TaskMonitor.DUMMY)
             if not success:
                 err = self.raw.getLastError()
                 raise RuntimeError("Error at {}: {}".format(current, err))
 
-            instruction = Instruction(current)
+            callback(Instruction(current))
+            current = self.raw.getExecutionAddress()
+            maxsteps -= 1
+
+    def trace_pcode(
+        self, start, end, callback, maxsteps=2**48
+    ):  # type: (Addr, Addr, Callable[[PcodeOp], None], int) -> None
+        """Emulate from start to end address, with callback for each executed PcodeOp.
+
+        :param start: the start address to emulate
+        :param end: the end address to emulate
+        :param callback: the callback to call for each executed pcode op"""
+
+        def instr_callback(instruction):  # type: (Instruction) -> None
             for op in instruction.pcode:
                 callback(op)
 
-            current = self.raw.getExecutionAddress()
+        self.trace(start, end, instr_callback, maxsteps)
 
     def propagate_varnodes(
         self, start, end
@@ -2675,6 +2797,12 @@ class Program(GhidraWrapper):
     def instructions():  # type: () -> list[Instruction]
         """Get all the instructions defined in the program."""
         return Instruction.all()
+
+    @staticmethod
+    def body():  # type: () -> AddressSet
+        """Get the set of all addresses of the program."""
+        body = currentProgram.getNamespaceManager().getGlobalNamespace().getBody()
+        return AddressSet(body)
 
 
 def to_bytestring(val):  # type: (str | list[int]) -> str
@@ -2786,6 +2914,16 @@ def read_u32(address):  # type: (Addr) -> int
     return from_bytes(read_bytes(address, 4))
 
 
+def read_u64(address):  # type: (Addr) -> int
+    """Read a 64bit integer from program at address.
+
+        >>> read_u32(0x1000)
+        0x0102030405060708
+
+    :param address: address from which to read."""
+    return from_bytes(read_bytes(address, 8))
+
+
 def read_bytes(address, length):  # type: (Addr, int) -> str
     """Read a byte stream from program at address.
 
@@ -2807,6 +2945,21 @@ def from_bytes(b):  # type: (str | list[int]) -> int
     :param b: byte stream to decode."""
     b = to_bytestring(b)
     return sum(ord(v) << (i * 8) for i, v in enumerate(b))
+
+
+def to_bytes(value, length):  # type: (int, int) -> str
+    """Encode an integer as a little-endian byte stream.
+
+        >>> to_bytes(0x0102, 2)
+        '\\x01\\x02'
+
+    :param value: integer to encode.
+    :param length: number of bytes of the result."""
+    out = ""
+    for i in range(length):
+        out += chr(value & 0xFF)
+        value >>= 8
+    return out
 
 
 def unhex(s):  # type: (str) -> str
@@ -2837,8 +2990,8 @@ def xor(a, b):  # type: (str, str) -> str
     If two bytestrings are not the same length, the result will be
     truncated to the length of the shorter string.
 
-        >>> xor("\x01\x02", "\x03\x04")
-        '\x02\x06'
+        >>> xor("\\x01\\x02", "\\x03\\x04")
+        '\\x02\\x06'
 
     :param a: the first bytestring.
     :param b: the second bytestring."""
@@ -2847,11 +3000,17 @@ def xor(a, b):  # type: (str, str) -> str
 
 def get_unique_string(obj):  # type: (object) -> str
     """Get a unique string for a given object.
+
     This function is used to convert objects to strings for the graph.
+    The only requirement is that the returned string is unique for
+    each object. Function will just return str(obj) for primitives,
+    and for the rest it will try to return str(obj.address).
 
     :param obj: the object to convert."""
     if isinstance(obj, Str):
         return obj
+    elif isinstance(obj, (int, long)):
+        return str(obj)
     elif hasattr(obj, "address"):
         # So you can define your own way to convert an object to a string.
         return str(obj.address)  # type: ignore
