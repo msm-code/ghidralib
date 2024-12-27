@@ -4,6 +4,10 @@ from ghidralib import *
 # Run tests on 44573a7526d5053a28d4e3e70c6ad8adf8eec148d8fe81302140b6bb3df179c0
 
 
+# TODO: Symbol.remove
+# TODO: disassemble_at
+
+
 ###############################################################
 # Test Graph
 ###############################################################
@@ -552,8 +556,8 @@ def test_program():
 
 def test_util():
     data = read_bytes(0x0403ED0, 10)
-    assert len(disassemble(data)) > 0
-    assert disassemble(data)[0].mnemonic == "CALL"
+    assert len(disassemble_bytes(data)) > 0
+    assert disassemble_bytes(data)[0].mnemonic == "CALL"
 
     assert from_bytes([0x01, 0x02]) == 0x0201
     assert to_bytes(0x0201, 2) == "\x01\x02"

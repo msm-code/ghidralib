@@ -58,6 +58,8 @@ from __main__ import (
     getBytes,
     currentLocation,
     monitor,
+    removeSymbol,
+    getCurrentProgram,
 )
 
 try:
@@ -1219,12 +1221,19 @@ class Instruction(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Instruction object"""
 
     @staticmethod
-    def get(raw_or_address):  # type: (JavaObject|Addr) -> Instruction|None
-        """Get an instruction at an address, or None if not found."""
-        if can_resolve(raw_or_address):
-            raw = getInstructionAt(resolve(raw_or_address))
+    def get(address):  # type: (Addr) -> Instruction|None
+        """Get an instruction at the address, or None if not found.
+
+        Note: This will return None if the instruction is not defined in Ghidra
+        at the given address. If you want to disassemble an address, not necessarily
+        defined in Ghidra, try :func:`disassemble_at` instead.
+
+        :param address: The address of the instruction.
+        :return: The instruction at the address, or None if not found."""
+        if can_resolve(address):
+            raw = getInstructionAt(resolve(address))
         else:
-            raw = raw_or_address
+            raw = address
         if raw is None:
             return None
         return Instruction(raw)
@@ -1783,7 +1792,7 @@ class FunctionCall(BodyTrait):
 
     def emulate(self):  # type: () -> Emulator
         """Emulate the basic block of this function call, and return the state
-        
+
         This is emulating a setup to the function (recovers the parameters),
         NOT the function call itself. If you want to emulate the function
         call, create a new Emulator object, set the appropriate registers/memory,
@@ -2301,6 +2310,14 @@ class Symbol(GhidraWrapper):
         raw = createLabel(resolve(address), name, False, source)
         return Symbol(raw)
 
+    @staticmethod
+    def remove(address, name):  # type: (Addr, str) -> None
+        """Remove the symbol with the given name at the given address.
+
+        :param address: the address of the symbol to remove.
+        :param name: the name of the symbol to remove."""
+        removeSymbol(resolve(address), name)
+
     @property
     def address(self):  # type: () -> int
         """Get the address of this symbol."""
@@ -2680,7 +2697,7 @@ class Emulator(GhidraWrapper):
         current = resolve(start)
         end = resolve(end)
         while current != end and maxsteps > 0:
-            success = self.raw.step(TaskMonitor.DUMMY)
+            success = self.raw.step(monitor)
             if not success:
                 err = self.raw.getLastError()
                 raise RuntimeError("Error at {}: {}".format(current, err))
@@ -2814,10 +2831,12 @@ def to_bytestring(val):  # type: (str | list[int]) -> str
     return val
 
 
-def disassemble(
+def disassemble_bytes(
     data, addr=0, max_instr=None
-):  # type: (str, int, int|None) -> list[Instruction]
+):  # type: (str, Addr, int|None) -> list[Instruction]
     """Disassemble the given bytes and return a list of Instructions.
+
+    This function will return early if an exception during disassembly occurs.
 
     :param data: the bytes to disassemble
     :param addr: the (virtual) address of the first instruction
@@ -2827,22 +2846,62 @@ def disassemble(
     dis = PseudoDisassembler(currentProgram)
     offset = 0
     result = []
+    address = resolve(addr)
     if max_instr is None:
         max_instr = 100000000
     for _ in range(0, max_instr):
         try:
             arr = data[offset : offset + 16]
-            try:
-                rawinstr = dis.disassemble(toAddr(addr + offset), arr)
-            except:
-                # I guess we are done with all the bytes
-                break
+            rawinstr = dis.disassemble(address.add(offset), arr)
             instr = Instruction(rawinstr)
+            if offset + instr.length > len(data):
+                # Don't append the instruction if it would go past the end of the data
+                break
             result.append(instr)
             offset += instr.length
+            if offset + instr.length > len(data):
+                # Check if we're done
+                break
         except:
             break
     return result
+
+
+# TODO: wrap this function in a Pythonic API too
+def _get_memory_block(addr):  # type: (Addr) -> JavaObject
+    """Get the memory block containing the given address."""
+    return currentProgram.getMemory().getBlock(resolve(addr))
+
+
+def disassemble_at(
+    address, max_bytes=None, max_instr=None
+):  # type: (Addr, int|None, int|None) -> list[Instruction]
+    """Disassemble the bytes from the program memory at the given address.
+
+    If neither `max_bytes` nor `max_instr` are specified, this function will
+    disassemble one instruction. If at least one of them is specified,
+    this function will disassemble until one of the conditions occurs.
+
+    :param address: the address where to start disassembling
+    :param max_bytes: maximum number of bytes to disassemble (None for no limit)
+    :param max_instr: maximum number of instructions to disassemble (None for no limit)
+    :return: a list of Instruction objects"""
+    address = resolve(address)
+
+    if max_instr is None:
+        _max_instr = 1 if max_bytes is None else max_bytes
+    else:
+        _max_instr = max_instr
+
+    if max_bytes is None:
+        to_block_end = _get_memory_block(address).getEnd().subtract(address)
+        # Hacky and inefficient, but good enough for now (and correct)
+        _max_bytes = min(to_block_end, _max_instr * 16)
+    else:
+        _max_bytes = max_bytes
+    data = read_bytes(address, _max_bytes)
+
+    return disassemble_bytes(data, address, _max_instr)
 
 
 def get_string(address):  # type: (Addr) -> str|None
@@ -3016,3 +3075,7 @@ def get_unique_string(obj):  # type: (object) -> str
         return str(obj.address)  # type: ignore
     else:
         raise TypeError("Cannot convert object {} to string".format(obj))
+
+
+def test():
+    print(getCurrentProgram().getName())
