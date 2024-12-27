@@ -53,7 +53,6 @@ from __main__ import (
     createData,
     clearListing,
     getReferencesTo,
-    currentProgram,
     getInstructionAt,
     getBytes,
     currentLocation,
@@ -619,7 +618,7 @@ class Register(GhidraWrapper):
     def get(raw_or_name):  # type: (str|JavaObject) -> Register|None
         """Get a register by name"""
         if isinstance(raw_or_name, Str):
-            raw_or_name = currentProgram.getLanguage().getRegister(raw_or_name)
+            raw_or_name = Program.current().getLanguage().getRegister(raw_or_name)
             if raw_or_name is None:
                 return None
         return Register(raw_or_name)
@@ -681,7 +680,7 @@ class Varnode(GhidraWrapper):
         "Named" in this context means that it has a conventional name, like RAX.
         Not all register varnodes are named, for example, the upper 32 bits of RAX
         have no commonly used name."""
-        language = currentProgram.getLanguage()
+        language = Program.current().getLanguage()
         raw = language.getRegister(self.raw.getAddress(), self.size)
         return raw is not None
 
@@ -691,7 +690,7 @@ class Varnode(GhidraWrapper):
 
         Warning: even if is_register returns true, this does not mean you can use
         this method safely. Use is_named_register to make sure."""
-        language = currentProgram.getLanguage()
+        language = Program.current().getLanguage()
         raw = language.getRegister(self.raw.getAddress(), self.size)
         return raw.getName()
 
@@ -991,7 +990,7 @@ class HighFunction(GhidraWrapper):
 
         ingraph.setIndices()
         decompiler = DecompInterface()
-        decompiler.openProgram(currentProgram)
+        decompiler.openProgram(Program.current())
         outgraph = decompiler.structureGraph(ingraph, 0, monitor)
         return BlockGraph(outgraph)
 
@@ -1241,7 +1240,7 @@ class Instruction(GhidraWrapper, BodyTrait):
     @staticmethod
     def all():  # type: () -> list[Instruction]
         """Get all instruction defined in the current program."""
-        raw_instructions = currentProgram.getListing().getInstructions(True)
+        raw_instructions = Program.current().getListing().getInstructions(True)
         return [Instruction(raw) for raw in raw_instructions]
 
     @property
@@ -1357,6 +1356,23 @@ class Instruction(GhidraWrapper, BodyTrait):
     def body(self):  # type: () -> AddressSet
         """Get the address range this instruction."""
         return AddressSet.create(self.address, self.length)
+
+    @property
+    def fallthrough_override(self):  # type: () -> int|None
+        """Get the override for the fallthrough address, if any"""
+        fall = self.raw.getFallThrough()
+        if not fall:
+            return None
+        return fall.getOffset()
+
+    # TODO: doesn't work?
+    @fallthrough_override.setter
+    def fallthrough_override(self, value):  # type: (Addr) -> None
+        self.raw.setFallThrough(resolve(value))
+
+    @fallthrough_override.deleter
+    def fallthrough_override(self):  # type: () -> None
+        self.raw.clearFallThroughOverride()
 
 
 class AddressRange(GhidraWrapper):
@@ -1505,7 +1521,7 @@ class BasicBlock(AddressSet, BodyTrait):
         if raw_or_address is None:
             return None
         if can_resolve(raw_or_address):
-            block_model = SimpleBlockModel(currentProgram)
+            block_model = SimpleBlockModel(Program.current())
             addr = try_resolve(raw_or_address)
             if addr is None:
                 return None
@@ -1519,7 +1535,7 @@ class BasicBlock(AddressSet, BodyTrait):
     @staticmethod
     def all():  # type: () -> list[BasicBlock]
         """Get a list of all basic blocks in the program."""
-        block_model = SimpleBlockModel(currentProgram)
+        block_model = SimpleBlockModel(Program.current())
         return [BasicBlock(b) for b in block_model.getCodeBlocks(TaskMonitor.DUMMY)]
 
     @property
@@ -1924,7 +1940,7 @@ class Function(GhidraWrapper, BodyTrait):
         addr = try_resolve(addr)
         if addr is None:
             return None
-        raw = currentProgram.getListing().getFunctionContaining(addr)
+        raw = Program.current().getListing().getFunctionContaining(addr)
         if raw is None:
             return None
         return Function(raw)  # type: ignore
@@ -1932,7 +1948,7 @@ class Function(GhidraWrapper, BodyTrait):
     @staticmethod
     def all():  # type: () -> list[Function]
         """Return all functions in the current program."""
-        raw_functions = currentProgram.getFunctionManager().getFunctions(True)
+        raw_functions = Program.current().getFunctionManager().getFunctions(True)
         return [Function(f) for f in raw_functions]
 
     @staticmethod
@@ -2011,7 +2027,7 @@ class Function(GhidraWrapper, BodyTrait):
                 "for functions with custom storage"
             )
         data = DataType(datatype)
-        param = ParameterImpl(name, data.raw, 0, currentProgram)
+        param = ParameterImpl(name, data.raw, 0, Program.current())
         self.raw.addParameter(param, SourceType.USER_DEFINED)
 
     def add_register_parameter(
@@ -2026,7 +2042,7 @@ class Function(GhidraWrapper, BodyTrait):
             self.raw.setCustomVariableStorage(True)
         reg = Register(register)
         data = DataType(datatype)
-        param = ParameterImpl(name, data.raw, reg.raw, currentProgram)
+        param = ParameterImpl(name, data.raw, reg.raw, Program.current())
         self.raw.addParameter(param, SourceType.USER_DEFINED)
 
     @property
@@ -2067,7 +2083,7 @@ class Function(GhidraWrapper, BodyTrait):
     @property
     def instructions(self):  # type: () -> list[Instruction]
         """Get the assembler instructions for this function."""
-        listing = currentProgram.getListing()
+        listing = Program.current().getListing()
         raw_instructions = listing.getInstructions(self.raw.getBody(), True)
         return [Instruction(raw) for raw in raw_instructions]
 
@@ -2120,7 +2136,7 @@ class Function(GhidraWrapper, BodyTrait):
     @property
     def basicblocks(self):  # type: () -> list[BasicBlock]
         """Get the basic blocks of this function."""
-        block_model = BasicBlockModel(currentProgram)
+        block_model = BasicBlockModel(Program.current())
         blocks = block_model.getCodeBlocksContaining(
             self.raw.getBody(), TaskMonitor.DUMMY
         )
@@ -2129,7 +2145,7 @@ class Function(GhidraWrapper, BodyTrait):
     def _decompile(self, simplify="decompile"):  # type: (str) -> JavaObject
         """Decompile this function (internal helper)."""
         decompiler = DecompInterface()
-        decompiler.openProgram(currentProgram)
+        decompiler.openProgram(Program.current())
         decompiler.setSimplificationStyle(simplify)
         decompiled = decompiler.decompileFunction(self.raw, 5, TaskMonitor.DUMMY)
         decompiler.closeProgram()
@@ -2226,7 +2242,7 @@ class Function(GhidraWrapper, BodyTrait):
     @property
     def primary_symbols(self):  # type: () -> list[Symbol]
         """Get the primary symbols for this function."""
-        symtable = currentProgram.getSymbolTable()
+        symtable = Program.current().getSymbolTable()
         syms = symtable.getPrimarySymbolIterator(self.raw.getBody(), True)
         return [Symbol(s) for s in syms]
 
@@ -2240,7 +2256,7 @@ class Function(GhidraWrapper, BodyTrait):
         if adequate."""
         body = self.raw.getBody()
         symbols = []
-        symtable = currentProgram.getSymbolTable()
+        symtable = Program.current().getSymbolTable()
         for rng in body:
             for addr in rng:
                 symbols.extend(symtable.getSymbols(addr))
@@ -2278,13 +2294,17 @@ class Symbol(GhidraWrapper):
 
         :param raw_or_name: a Ghidra Java object, a string, or an address."""
         if isinstance(raw_or_name, str):
-            symbol_iterator = currentProgram.getSymbolTable().getSymbols(raw_or_name)
+            symbol_iterator = Program.current().getSymbolTable().getSymbols(raw_or_name)
             symbols = collect_iterator(symbol_iterator)
             if not symbols:
                 return None
             raw = symbols[0]
         elif can_resolve(raw_or_name):
-            raw = currentProgram.getSymbolTable().getPrimarySymbol(resolve(raw_or_name))
+            raw = (
+                Program.current()
+                .getSymbolTable()
+                .getPrimarySymbol(resolve(raw_or_name))
+            )
             if not raw:
                 return None
         else:
@@ -2294,7 +2314,7 @@ class Symbol(GhidraWrapper):
     @staticmethod
     def all():  # type: () -> list[Symbol]
         """Get all symbols."""
-        symbol_iterator = currentProgram.getSymbolTable().getAllSymbols(True)
+        symbol_iterator = Program.current().getSymbolTable().getAllSymbols(True)
         symbols = collect_iterator(symbol_iterator)
         return [Symbol(s) for s in symbols]
 
@@ -2394,7 +2414,7 @@ class DataType(GhidraWrapper):
 
         :param only_local: if True, return only local data types. Otherwise,
           will scan all data types in all data type managers."""
-        datatypes = list(currentProgram.getDataTypeManager().getAllDataTypes())
+        datatypes = list(Program.current().getDataTypeManager().getAllDataTypes())
         if only_local:
             return datatypes
         managers = (
@@ -2451,7 +2471,7 @@ class DataType(GhidraWrapper):
         :param c_code: the C structure definition
         :param insert: if True, add the data type to the current program
         """
-        dtm = currentProgram.getDataTypeManager()
+        dtm = Program.current().getDataTypeManager()
         parser = CParser(dtm)
 
         new_dt = parser.parse(c_code)
@@ -2469,7 +2489,7 @@ class Emulator(GhidraWrapper):
 
     def __init__(self):  # type: () -> None
         """Create a new Emulator object."""
-        raw = EmulatorHelper(currentProgram)
+        raw = EmulatorHelper(Program.current())
         GhidraWrapper.__init__(self, raw)
 
     @property
@@ -2675,12 +2695,12 @@ class Emulator(GhidraWrapper):
             rawnum = self.raw.readMemory(varnode.offset, varnode.size)
             return from_bytes(rawnum)
         elif varnode.is_unique:
-            space = currentProgram.getAddressFactory().getUniqueSpace()
+            space = Program.current().getAddressFactory().getUniqueSpace()
             offset = space.getAddress(varnode.offset)
             rawnum = self.raw.readMemory(offset, varnode.size)
             return from_bytes(rawnum)
         elif varnode.is_register:
-            language = currentProgram.getLanguage()
+            language = Program.current().getLanguage()
             reg = language.getRegister(varnode.raw.getAddress(), varnode.size)
             return self.raw.readRegister(reg)
         raise RuntimeError("Unsupported varnode type")
@@ -2818,8 +2838,17 @@ class Program(GhidraWrapper):
     @staticmethod
     def body():  # type: () -> AddressSet
         """Get the set of all addresses of the program."""
-        body = currentProgram.getNamespaceManager().getGlobalNamespace().getBody()
+        body = Program.current().getNamespaceManager().getGlobalNamespace().getBody()
         return AddressSet(body)
+
+    @staticmethod
+    def current():  # type: () -> JavaObject
+        """Get the current program. Equivalent to getCurrentProgram()
+
+        This method must be used instead of currentProgram, because the latter
+        won't work well if user is using multiple programs at the same time
+        (for example, many tabs in the same tool)."""
+        return getCurrentProgram()
 
 
 def to_bytestring(val):  # type: (str | list[int]) -> str
@@ -2843,7 +2872,7 @@ def disassemble_bytes(
     :param max_instr: the maximum number of instructions to disassemble, or
     to disassemble until the end of the data
     :return: a list of Instruction objects"""
-    dis = PseudoDisassembler(currentProgram)
+    dis = PseudoDisassembler(Program.current())
     offset = 0
     result = []
     address = resolve(addr)
@@ -2870,7 +2899,7 @@ def disassemble_bytes(
 # TODO: wrap this function in a Pythonic API too
 def _get_memory_block(addr):  # type: (Addr) -> JavaObject
     """Get the memory block containing the given address."""
-    return currentProgram.getMemory().getBlock(resolve(addr))
+    return Program.current().getMemory().getBlock(resolve(addr))
 
 
 def disassemble_at(
@@ -3075,7 +3104,3 @@ def get_unique_string(obj):  # type: (object) -> str
         return str(obj.address)  # type: ignore
     else:
         raise TypeError("Cannot convert object {} to string".format(obj))
-
-
-def test():
-    print(getCurrentProgram().getName())
