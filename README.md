@@ -120,11 +120,11 @@ while path.get(target):
 
 6. Thanks to type hints, scripting gets *much* easier if your IDE supports that.
 
-Finally, ghidralib doesn't lock you in - you can always retreat to familiar Ghidra types
-- they are always just there, in the `.raw` property. For example `instruction.raw`
+Finally, ghidralib doesn't lock you in - you can always retreat to familiar Ghidra types -
+just get them from the `.raw` property. For example `instruction.raw`
 is a Ghidra Instruction object, similarly `function.raw` is a Ghidra Function.
 So you can do the routine stuff in ghidralib, and fall back to Java if something
-is not implemented in ghidralib.
+is not implemented.
 
 ## Learn more
 
@@ -138,11 +138,9 @@ slightly in the future. But this doesn't matter for your one-off scripts, does i
 
 ## Contributing
 
-A bit too early to ask for contributions, but PRs are very welcome.
-Ghidra API sufrace is huge and I covered just a small part of it (that I use most often).
-Feel free to open PRs to add things you are missing.
+PRs are welcome. Feel free to open PRs to add things you need.
 
-You can also just report issues. Feature request are also accepted,
-since I'm trying to cover common use-cases.
+You can also just report issues and send feature requests. I started this library to
+cover my own needs, but I'm interested in learning what other people use it for.
 
 *Dragon icon at the top created by cube29, flaticon*
