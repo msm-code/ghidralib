@@ -337,6 +337,7 @@ def test_function_call():
     assert len(call.high_varnodes) > 0
     assert call.high_varnodes[0].raw
     assert len(call.infer_args()) > 0
+    assert call.infer_context() is not None
 
     assert call.instruction.mnemonic == "CALL"
 

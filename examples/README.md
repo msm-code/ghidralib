@@ -11,7 +11,8 @@ But I plan to share snippets of things I write during my daily work here.
 Scripts to serve as examples, and maybe to ensure everything works smoothly in ghidralib.
 Scripts here are often rewritten Ghidra examples, or very small deobfuscation scripts.
 
-* [SwitchOverride](./SwitchOverride.py): Fixup a switch statement at the pointer location.
+* [SwitchOverride](./SwitchOverride.py): Fixup a switch statement at the pointer location (in 40 lines of code, [original](https://github.com/NationalSecurityAgency/ghidra/blob/master/Ghidra/Features/Decompiler/ghidra_scripts/SwitchOverride.java) has 110).
+* [DumpHighPcode](./DumpHighPcode.py): Dump high-level Pcode of a function (in 4 lines of code, [original](https://github.com/evm-sec/high-pcode/blob/main/HighPCode.java) has 103).
 
 ## Everyday use
 
@@ -25,7 +26,7 @@ Scripts here are often rewritten Ghidra examples, or very small deobfuscation sc
   by the second MOV operand to automatically rename and retype the function pointer from the
   first parameter. And all of that in just ~20 lines of code!
 
-## Pretty cool things
+## Fancy things
 
 * [DumpFunctionAST](./DumpFunctionAST.py): pretty print a function structure (AST)
   as recovered by the decompiler. This is novel: as far as I know there was no

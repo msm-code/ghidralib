@@ -1518,6 +1518,7 @@ class AddressSet(GhidraWrapper):
         return self.raw.contains(resolve(addr))
 
     def __contains__(self, addr):  # type: (Addr) -> bool
+        """Return True if the given address is in this range."""
         return self.contains(addr)
 
     @property
@@ -1931,9 +1932,6 @@ class FunctionCall(BodyTrait):
         Warning: this works on decompiled functions only, so it will work
           if the call is done from a region not recognised as function.
         Warning: this method needs to decompile the function, and is therefore slow.
-
-        :param method: Pass None to use the default method. Currently no other methods
-        are supported.
         """
         basicblock = BasicBlock(self.address)
 
@@ -2364,6 +2362,11 @@ class Function(GhidraWrapper, BodyTrait):
         to do a pre-call setup (for example, write string parameters to memory). But
         don't use this to change call parameters, as they are always overwriten.
 
+            >>> fnc = Function(0x004061EC)
+            >>> emu = fnc.emulate(-0x80000000)
+            >>> emu.read_unicode(emu["eax"])
+            "HKEY_CLASSES_ROOT"
+
         :param args: The arguments to pass to the function.
         :param kwargs: pass `emulator` kwarg to use the provided emulator
           (default: create a new one)."""
@@ -2417,7 +2420,7 @@ class Symbol(GhidraWrapper):
 
     @staticmethod
     def all():  # type: () -> list[Symbol]
-        """Get all symbols."""
+        """Get all symbols defined in the program."""
         symbol_iterator = Program.current().getSymbolTable().getAllSymbols(True)
         symbols = collect_iterator(symbol_iterator)
         return [Symbol(s) for s in symbols]
@@ -2533,8 +2536,9 @@ class DataType(GhidraWrapper):
     def name(self):  # type: () -> str
         """Get a name of this data type
 
-        >>> DataType('int').name
-        'int'
+            >>> DataType('int').name
+            'int'
+        .
         """
         return self.raw.getName()
 
@@ -2547,8 +2551,9 @@ class DataType(GhidraWrapper):
     def length(self):  # type: () -> int
         """Get the length of this data type in bytes
 
-        >>> DataType('int').length()
-        4
+            >>> DataType('int').length()
+            4
+        .
         """
         return self.raw.getLength()
 
@@ -2645,7 +2650,7 @@ class Emulator(GhidraWrapper):
         return self.raw.readRegister(reg)
 
     def read_bytes(self, address, length):  # type: (Addr, int) -> str
-        """An alias for `read_bytes`.
+        """Read `length` bytes at `address` from the emulated program.
 
             >>> emulator.write_bytes(0x1000, "1")
             >>> emulator.read_bytes(0x1000, 1)
@@ -2739,6 +2744,14 @@ class Emulator(GhidraWrapper):
 
         This method can't read hash varnodes.
 
+            >>> fnc = Function("AddNumbers")
+            >>> emu = Emulator()
+            >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
+            >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
+            >>> emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+            >>> emu.read_varnode(func.return_variable.varnode)
+            4
+
         :param varnode: the varnode to read from."""
         varnode = Varnode(varnode)
         if varnode.is_constant:
@@ -2830,6 +2843,14 @@ class Emulator(GhidraWrapper):
 
         This method can't set hash and constant varnodes.
 
+            >>> fnc = Function("AddNumbers")
+            >>> emu = Emulator()
+            >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
+            >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
+            >>> emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+            >>> emu.read_varnode(func.return_variable.varnode)
+            4
+
         :param varnode: the varnode to read from."""
         varnode = Varnode(varnode)
         if varnode.is_constant:
@@ -2913,9 +2934,17 @@ class Emulator(GhidraWrapper):
     ):  # type: (Addr, Addr, Callable[[Instruction], None], int) -> None
         """Emulate from start to end address, with callback for each executed Instruction.
 
+            >>> emu = Emulator()
+            >>> def pr(x): print(x)
+            >>> emu.trace(Function("main").entrypoint, 0, pr, 3)
+            SUB ESP,0x2d4
+            PUSH EBX
+            PUSH EBP
+
         :param start: the start address to emulate
         :param end: the end address to emulate
-        :param callback: the callback to call for each executed instruction"""
+        :param callback: the callback to call for each executed instruction
+        :param maxsteps: the maximum number of steps to execute"""
         self.set_pc(start)
         current = resolve(start)
         end = resolve(end)
@@ -2947,6 +2976,13 @@ class Emulator(GhidraWrapper):
     def propagate_varnodes(
         self, start, end
     ):  # type: (Addr, Addr) -> dict[Varnode, int]
+        """Propagate a known varnote state from start to end address.
+
+        This is probably not the best way to do it - there is a large chance it'll
+        be reworked to something better in the future.
+
+        :param start: the start address to propagate from
+        :param end: the end address to propagate to"""
         known_state = {}  # type: dict[Varnode, int]
 
         def callback(op):  # type: (PcodeOp) -> None
@@ -2989,8 +3025,8 @@ class Program(GhidraWrapper):
     def location():  # type: () -> int
         """Get the current location in the program.
 
-        >>> current_location()
-        0x1000
+            >>> current_location()
+            0x1000
 
         :return: the current location in the program
         """
