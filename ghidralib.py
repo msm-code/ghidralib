@@ -69,6 +69,8 @@ from __main__ import (
 )
 from java.util import ArrayList
 
+__version__ = "0.1.0"
+
 try:
     # For static type hints (won't work in Ghidra)
     from typing import Any, Callable, TYPE_CHECKING, Iterator, TypeVar, Generic

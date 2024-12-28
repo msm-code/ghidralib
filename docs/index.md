@@ -37,3 +37,4 @@ on Github.
 
 A fair warning: ghidralib is still actively developed and the API may change
 in the future. But this doesn't matter for your one-off scripts, does it?
+Current compatibility status is documented [here](./compatibility.md).
