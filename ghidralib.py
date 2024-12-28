@@ -66,6 +66,7 @@ from __main__ import (
     monitor,
     removeSymbol,
     getCurrentProgram,
+    disassemble,
 )
 from java.util import ArrayList
 
@@ -234,16 +235,14 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
 def try_resolve(addr):  # type: (Addr) -> GenericAddress | None
     """Convert an arbitrary addressable value to a Ghidra Address object.
 
-    See `resolve` documentation for more details."""
+    See `resolve` documentation for more details.
+
+    :param addr: An addressable value.
+    :return: A GenericAddress representing the value, or None resolving failed."""
     try:
         return resolve(addr)
     except:
         return None
-
-
-def resolve_to_int(addr):  # type: (Addr) -> int
-    """Convert an addressable value to an integer representation."""
-    return resolve(addr).getOffset()
 
 
 def can_resolve(addr):  # type: (Addr) -> bool
@@ -261,7 +260,7 @@ def unwrap(wrapper_or_java_type):  # type: (JavaObject|GhidraWrapper) -> JavaObj
     return wrapper_or_java_type
 
 
-def collect_iterator(iterator):
+def collect_iterator(iterator):  # type: (JavaObject) -> list
     """Collect a Java iterator to a Python list."""
     result = []
     while iterator.hasNext():
@@ -283,7 +282,7 @@ class Graph(GenericT, GhidraWrapper):
 
     We'd like to store arbitrary object in the graph, but it only supports
     strings for keys (and names). We have a way to convert objects we are
-    interested in to strings - see get_unique_string() method."""
+    interested in to strings - see _get_unique_string() method."""
 
     def __init__(self, raw):  # type: (AttributedGraph) -> None
         """Create a new Graph wrapper.
@@ -313,7 +312,7 @@ class Graph(GenericT, GhidraWrapper):
         """Check if a given vertex exists in this graph.
 
         :param vtx: The ID of the vertex to check."""
-        vid = get_unique_string(vtx)
+        vid = _get_unique_string(vtx)
         vobj = self.raw.getVertex(vid)
         return self.raw.containsVertex(vobj)
 
@@ -331,7 +330,7 @@ class Graph(GenericT, GhidraWrapper):
         :param name: The name of the vertex. If not provided,
         the ID will be used as the name.
         :returns: vtx parameter is returned"""
-        vid = get_unique_string(vtx)
+        vid = _get_unique_string(vtx)
         name = name or vid
         self.raw.addVertex(vid, name)
         self.data[vid] = vtx
@@ -342,8 +341,8 @@ class Graph(GenericT, GhidraWrapper):
 
         :param src: The source vertex ID.
         :param dst: The destination vertex ID."""
-        srcid = get_unique_string(src)
-        dstid = get_unique_string(dst)
+        srcid = _get_unique_string(src)
+        dstid = _get_unique_string(dst)
         srcobj = self.raw.getVertex(srcid)
         dstobj = self.raw.getVertex(dstid)
         self.raw.addEdge(srcobj, dstobj)
@@ -421,13 +420,23 @@ class Graph(GenericT, GhidraWrapper):
     ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
         """Perform a depth-first search on this graph, starting from the given vertex.
 
+        The callback will be called for each vertex visited when first visited, and
+        the returned value is a dictionary of parent vertices for each visited vertex.
+
+            >>> g = Graph.create()
+            >>> a, b, c = g.vertex("a"), g.vertex("b"), g.vertex("c")
+            >>> g.edge(a, b)
+            >>> g.edge(b, c)
+            >>> g.dfs(a)
+            {'a': None, 'b': 'a', 'c': 'b'}
+
         Warning: This won't reach every node in the graph, if it's not connected.
 
         :param origin: The ID of the vertex to start the search from.
         :param callback: A callback function to call for each vertex visited.
         :returns: A dictionary of parent vertices for each visited vertex.
         """
-        tovisit = [(None, get_unique_string(origin))]
+        tovisit = [(None, _get_unique_string(origin))]
         visited = set()
         parents = {origin: None}  # type: dict[T, T|None]
         while tovisit:
@@ -451,9 +460,18 @@ class Graph(GenericT, GhidraWrapper):
         then "origin" will be the last element in the list.
 
         On a practical example, for a call graph, this means that if A calls B, then
-        A will be before B in the list - so if you want to process from the bottom up,
-        you should use the entry point of the program as the origin.
+        B will be before A in the list - so if you want to process from the bottom up,
+        you should use the entry point of the program as the origin. In the example
+        below, the entry point is "a", "a" calls "b", and "b" calls "c":
 
+            >>> g = Graph.create()
+            >>> a, b, c = g.vertex("a"), g.vertex("b"), g.vertex("c")
+            >>> g.edge(a, b)
+            >>> g.edge(b, c)
+            >>> g.toposort(a)
+            ['c', 'b', 'a']
+
+        :param origin: The ID of the origin vertex to start the sort from.
         :returns: a list of vertex IDs in topological order."""
         visited = set()
         result = []
@@ -466,7 +484,7 @@ class Graph(GenericT, GhidraWrapper):
                     dfs(target.getId())
             result.append(self.__resolve(vid))
 
-        dfs(get_unique_string(origin))
+        dfs(_get_unique_string(origin))
         for vid in self.raw.vertexSet():
             if vid.getId() not in visited:
                 dfs(vid.getId())
@@ -477,11 +495,22 @@ class Graph(GenericT, GhidraWrapper):
     ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
         """Perform a breadth-first search on this graph, starting from the given vertex.
 
+        The callback will be called for each vertex visited when first visited, and
+        the returned value is a dictionary of parent vertices for each visited vertex.
+
+            >>> g = Graph.create()
+            >>> a, b, c = g.vertex("a"), g.vertex("b"), g.vertex("c")
+            >>> g.edge(a, b)
+            >>> g.edge(b, c)
+            >>> g.bfs(a)
+            {'a': None, 'b': 'a', 'c': 'b'}
+
         Warning: This won't reach every node in the graph, if it's not connected.
+
         :param origin: The ID of the vertex to start the search from.
         :param callback: A callback function to call for each vertex visited.
         """
-        tovisit = [(None, get_unique_string(origin))]
+        tovisit = [(None, _get_unique_string(origin))]
         visited = set()
         parents = {origin: None}  # type: dict[T, T|None]
         while tovisit:
@@ -3095,6 +3124,11 @@ class Program(GhidraWrapper):
 def to_bytestring(val):  # type: (str | list[int]) -> str
     """Ensure the passed value is a bytestring.
 
+        >>> to_bytestring([97, 98, 99])
+        'abc'
+        >>> to_bytestring("aaa")
+        'abc'
+
     This is used to convert java byte arrays to a proper python bytestring."""
     if not isinstance(val, Str):
         return "".join(chr(i % 256) for i in val)
@@ -3107,6 +3141,9 @@ def disassemble_bytes(
     """Disassemble the given bytes and return a list of Instructions.
 
     This function will return early if an exception during disassembly occurs.
+
+        >>> disassemble_bytes('F')
+        [INC ESI]
 
     :param data: the bytes to disassemble
     :param addr: the (virtual) address of the first instruction
@@ -3125,12 +3162,10 @@ def disassemble_bytes(
             rawinstr = dis.disassemble(address.add(offset), arr)
             instr = Instruction(rawinstr)
             if offset + instr.length > len(data):
-                # Don't append the instruction if it would go past the end of the data
                 break
             result.append(instr)
             offset += instr.length
-            if offset + instr.length > len(data):
-                # Check if we're done
+            if offset + instr.length == len(data):
                 break
         except:
             break
@@ -3144,13 +3179,16 @@ def _get_memory_block(addr):  # type: (Addr) -> JavaObject
 
 
 def disassemble_at(
-    address, max_bytes=None, max_instr=None
+    address, max_instr=None, max_bytes=None
 ):  # type: (Addr, int|None, int|None) -> list[Instruction]
     """Disassemble the bytes from the program memory at the given address.
 
     If neither `max_bytes` nor `max_instr` are specified, this function will
     disassemble one instruction. If at least one of them is specified,
     this function will disassemble until one of the conditions occurs.
+
+        >>> disassemble_at(0x0403ED0)
+        [INC ESI]
 
     :param address: the address where to start disassembling
     :param max_bytes: maximum number of bytes to disassemble (None for no limit)
@@ -3174,19 +3212,41 @@ def disassemble_at(
     return disassemble_bytes(data, address, _max_instr)
 
 
-def assemble_at(address, instructions):  # type: (Addr, str|list[str]) -> None
+def assemble_at(
+    address, instructions, pad_to=0
+):  # type: (Addr, str|list[str], int) -> None
     """Assemble the given instructions and write them at the given address.
 
     Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
     For example, use "MOV EAX, EBX" instead of "mov eax, ebx".
 
+        >>> assemble_at(Function("exit").entrypoint, "RET")
+
     :param address: the address where to write the instructions
-    :param instructions: a list of instructions, or a single instruction to assemble"""
+    :param instructions: a list of instructions, or a single instruction to assemble
+    :param pad_to: optionally, pad the code with NOPs to reach this size"""
     # Note: Assembler API is actually quite user-friendly and doesn't require
     # wrapping. But let's wrap it for consistency.
-    address = resolve(address)
+    addr = resolve(address)
     asm = Assemblers.getAssembler(Program.current())
-    asm.assemble(address, instructions)
+    result = [Instruction(i) for i in asm.assemble(addr, instructions)]
+
+    # Append NOPs at the end, if length is shorter than pad_to.
+    # This is purely to make the assembled code look nicer.
+    if result:
+        last = result[-1]
+        end_addr = last.address + last.length
+        code_size = end_addr - addr.getOffset()
+        if pad_to > code_size:
+            asm.assemble(addr.add(code_size), ["NOP"] * (pad_to - code_size))
+
+    # Do what Ghidra should do automaticaly, and automatically try to disassemble
+    # jump targets from the newly assembled instructions
+    for instr in result:
+        for xref in instr.xrefs_from:
+            if xref.is_call or xref.is_jump:
+                disassemble(toAddr(xref.to_address))
+
 
 
 def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> str
@@ -3196,6 +3256,11 @@ def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> 
     For example, use "MOV EAX, EBX" instead of "mov eax, ebx".
 
     Note: Address is required, because instruction bytes may depend on the location.
+
+        >>> assemble_to_bytes(0, "ADD EAX, EAX")
+        "\x01\xc0"
+        >>> assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"])
+        "\x01\xc0\x01\xc0"
 
     :param address: the address to use as a base for instructions
     :param instructions: a list of instructions, or a single instruction to assemble"""
@@ -3385,13 +3450,15 @@ def xor(a, b):  # type: (str, str) -> str
     return "".join(chr(ord(x) ^ ord(y)) for x, y in zip(a, b))
 
 
-def get_unique_string(obj):  # type: (object) -> str
+def _get_unique_string(obj):  # type: (object) -> str
     """Get a unique string for a given object.
 
     This function is used to convert objects to strings for the graph.
     The only requirement is that the returned string is unique for
     each object. Function will just return str(obj) for primitives,
     and for the rest it will try to return str(obj.address).
+
+    Warning: This function is an implemntation detail, and may be changed often.
 
     :param obj: the object to convert."""
     if isinstance(obj, Str):
@@ -3403,3 +3470,59 @@ def get_unique_string(obj):  # type: (object) -> str
         return str(obj.address)  # type: ignore
     else:
         raise TypeError("Cannot convert object {} to string".format(obj))
+
+
+def _pattern_to_bytes(pattern):  # type: (str) -> str
+    """Convert a pattern string to a byte string.
+
+        >>> _pattern_to_bytes("01 02 ?? 04")
+        '\\x01\\x02\\x00\\x04'
+
+    :param pattern: the pattern string."""
+    pattern = pattern.replace("?", "0")
+    return unhex(pattern)
+
+
+def _pattern_to_mask(pattern):  # type: (str) -> str
+    """Convert a pattern string to a mask string.
+
+        >>> _pattern_to_mask("01 02 ?? 04")
+        '\\xff\\xff\\x00\\xff'
+
+    :param pattern: the pattern string."""
+    pattern = pattern.replace(" ", "").replace("\n", "")
+    return unhex("".join("0" if c == "?" else "f" for c in pattern))
+
+
+def findone_pattern(byte_pattern, start=0):  # type: (str, Addr) -> int|None
+    """Find the first occurrence of a byte pattern in the program (or None).
+
+        >>> findone_pattern("01 02 ?? 04")
+        0x1000
+
+    :param byte_pattern: the pattern string.
+    :param start: the address to start searching from.
+    :return: address of the first occurrence, or None if not found."""
+    start = resolve(start)
+    bytes = _pattern_to_bytes(byte_pattern)
+    mask = _pattern_to_mask(byte_pattern)
+    addr = Program.current().getMemory().findBytes(start, bytes, mask, True, monitor)
+    if not addr:
+        return None
+    return addr.getOffset()
+
+
+def findall_pattern(byte_pattern):  # type: (str) -> Iterator[int]
+    """Find all occurrences of a byte pattern in the program.
+
+        >>> findall_pattern("01 02 ?? 04")
+        [0x1000, 0x1004]
+
+    :param byte_pattern: the pattern string.
+    :return: iterator over all addresses of all occurrences."""
+    addr = -1
+    while True:
+        addr = findone_pattern(byte_pattern, start=addr + 1)
+        if addr is None:
+            break
+        yield addr

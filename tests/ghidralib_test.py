@@ -589,8 +589,6 @@ def test_util():
     assert enhex("\x01\x02") == "0102"
     assert xor("\x01\x02", "\x03\x04") == "\x02\x06"
 
-    assert get_unique_string(Function("entry")) != ""
-
     assert get_string(0x40B968) == "ShellExecuteW"
     assert read_cstring(0x40B968) == "ShellExecuteW"
 
