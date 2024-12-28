@@ -54,22 +54,28 @@ print(get_bytes(pos, len_bytes))
   ```
 </details>
 
-3. Process all calls to a string deobfuscation function and get the parameters:
+3. Find all calls to a string deobfuscation function and get call parameters:
 
 ```python
 for call in Function("MyCustomCrypto").calls:
-    ctx = call.emulate()
+    ctx = call.infer_context()
     key, data = ctx["eax"], ctx["edx"]
     datalen = get_u32(data - 4)
     print(call.address, decode(get_bytes(data, datalen)))
 ```
-
 
 <details>
   <summary>For comparison, plain Ghidra equivalent:</summary>
 
   Just joking! Too long to fit in this README.
 </details>
+
+You can also emulate a function call and read the result:
+
+```python
+ctx = Function("GetFuncNameByHash").emulate(0x698766968)
+print(ctx.read_cstring(ctx["eax"]))
+```
 
 4. Tons more QoL features:
 
@@ -79,7 +85,7 @@ DataType.from_c("typedef void* HINTERNET;")  # Quickly parse structs and typedef
 
 func = Function("main")  # Work at various abstract levels
 print(function.instructions)  # Get instructions...
-print(function.basicblocks)  # Get ..basic blocks...
+print(function.basicblocks)  # ..basic blocks...
 print(function.pcode)  # ...low pcode...
 print(function.high_pcode)  # ...high pcode...
 print(function.decompile())  # ...or decompile a whole function
@@ -118,7 +124,7 @@ Finally, ghidralib doesn't lock you in - you can always retreat to familiar Ghid
 - they are always just there, in the `.raw` property. For example `instruction.raw`
 is a Ghidra Instruction object, similarly `function.raw` is a Ghidra Function.
 So you can do the routine stuff in ghidralib, and fall back to Java if something
-is not implemented - like in the [SwitchOverride](./examples/SwitchOverride.py) example.
+is not implemented in ghidralib.
 
 ## Learn more
 

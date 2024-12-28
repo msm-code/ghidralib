@@ -196,6 +196,8 @@ def test_instruction():
     mov = Instruction(0x40683E)
     assert len(mov.xrefs_from) > 0
 
+    # TODO fallthrough_override and jumptable
+
 
 # TODO AddressRange
 # TODO AddressSet
@@ -334,7 +336,7 @@ def test_function_call():
     assert len(call.high_pcodeop.inputs) > 1
     assert len(call.high_varnodes) > 0
     assert call.high_varnodes[0].raw
-    assert len(call.get_args()) > 0
+    assert len(call.infer_args()) > 0
 
     assert call.instruction.mnemonic == "CALL"
 
@@ -504,9 +506,9 @@ def test_emulator():
 
     emu["esi"] = 0
     assert emu["esi"] == 0
-    assert emu.read_memory(0x403ECB, 5) != "\x90\x90\x90\x90\x90"
-    emu.write_memory(0x403ECB, "\x90\x90\x90\x90\x90")
-    assert emu.read_memory(0x403ECB, 5) == "\x90\x90\x90\x90\x90"
+    assert emu.read_bytes(0x403ECB, 5) != "\x90\x90\x90\x90\x90"
+    emu.write_bytes(0x403ECB, "\x90\x90\x90\x90\x90")
+    assert emu.read_bytes(0x403ECB, 5) == "\x90\x90\x90\x90\x90"
     emu.emulate(0x403ECB, 0x403ED0)
     # assert emu["esi"] == 0
     # Uhh, looks like Ghidra emulator doesn't support self-modifying code yet.
@@ -516,7 +518,7 @@ def test_emulator():
     emu.write_register("esi", 1)
     assert emu.read_register("esi") == 1
 
-    emu.write_memory(0x400000, "\x01\x02\x03\x04\x05\x06\x07\x08")
+    emu.write_bytes(0x400000, "\x01\x02\x03\x04\x05\x06\x07\x08")
     assert emu.read_u8(0x400000) == 0x01
     assert emu.read_u16(0x400000) == 0x0201
     assert emu.read_u32(0x400000) == 0x04030201
@@ -531,7 +533,19 @@ def test_emulator():
     emu.write_u64(0x400000, 0x0807060504030201)
     assert emu.read_u64(0x400000) == 0x0807060504030201
 
-    assert emu.read_memory(0x400000, 8) == "\x01\x02\x03\x04\x05\x06\x07\x08"
+    assert emu.read_bytes(0x400000, 8) == "\x01\x02\x03\x04\x05\x06\x07\x08"
+
+    # High-level function emulation API
+    fnc = Function(0x004061EC)
+    emu = fnc.emulate(-0x80000000)
+    assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
+
+    # Low-level function emulation API
+    fnc = Function(0x004061EC)
+    emu = Emulator()
+    emu.write_varnode(fnc.parameters[0].varnode, -0x80000000)
+    emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+    assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
 
 
 ###############################################################
@@ -558,6 +572,14 @@ def test_util():
     data = read_bytes(0x0403ED0, 10)
     assert len(disassemble_bytes(data)) > 0
     assert disassemble_bytes(data)[0].mnemonic == "CALL"
+
+    assert disassemble_at(0x0403ED0)[0].mnemonic == "CALL"
+    assert len(disassemble_at(0x0403ED0)) == 1
+    assert len(disassemble_at(0x0403ED0, max_instr=2)) == 2
+
+    assert assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"]) == "\x01\xc0\x01\xc0"
+    assert assemble_to_bytes(0, "ADD EAX, EAX") == "\x01\xc0"
+    # TODO: assemble_at
 
     assert from_bytes([0x01, 0x02]) == 0x0201
     assert to_bytes(0x0201, 2) == "\x01\x02"

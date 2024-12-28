@@ -82,17 +82,20 @@ print(Function("main").decompile())
 # Define a function at address 0x400300
 Function.create(0x400300, "main")
 
-# Print a value of eax and edx at each call of this function
+# Infer a value of eax and edx at each call of this function
 for call in Function("MyCustomCrypto").calls:
-    ctx = call.emulate()
+    ctx = call.infer_context()
     key, data = ctx["eax"], ctx["edx"]
     print(key, data)
 
-# Print parameters of each call to this function, as seen by
-# the decompiler
+# Infer parameters for each call to this function (using the decmopiler)
 for call in Function("MyCustomCrypto").calls:
     key, data = call.get_args()
     print(key, data)
+
+# Emulate a function call and pass parameters (using the function signature)
+ctx = Function("GetFuncNameByHash").emulate(0x698766968)
+print(ctx.read_cstring(ctx["eax"]))
 ```
 
 Read more in the [`Function` object documentation](reference.md#ghidralib.Function).
@@ -233,10 +236,15 @@ Emulate the program from 0x400300 to 0x400400. When finished, read the value of 
 and the memory at 0x401000.
 
 ```python
+# Create a new emulator and execute code between 0x400300 and 0x400400
 emu = Emulator()
-emu.emulate(0x400300, 0x400300 + 0x100)
+emu.emulate(0x400300, 0x400400)
 print(emu["eax"])
-print(emu.read_memory(0x401000, 16))
+print(emu.read_bytes(0x401000, 16))
+
+# Emulate a function call and pass parameters (using the function signature)
+ctx = Function("GetFuncNameByHash").emulate(0x698766968)
+print(ctx.read_cstring(ctx["eax"]))
 ```
 
 In practice you can often use this for recovering obfuscated strings, or unpacking

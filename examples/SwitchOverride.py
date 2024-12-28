@@ -41,17 +41,10 @@ def switch_override(addr):  # type: (Addr) -> None
         print("Computed jump instruction must be in a Function body.")
         return
 
-    for dest in destlist:
-        inst.add_operand_reference(0, dest, RefType.COMPUTED_JUMP)
-
-    # For now, just fall-back to java at the end
-    from ghidra.program.model.pcode import JumpTable  # type: ignore
-    from ghidra.app.cmd.function import CreateFunctionCmd  # type: ignore
-    from java.util import ArrayList  # type: ignore
-
-    jumpTab = JumpTable(toAddr(addr), ArrayList(toAddr(d) for d in destlist), True)
-    jumpTab.writeOverride(func)
-    CreateFunctionCmd.fixupFunctionBody(currentProgram, func.raw, monitor)
+    # At some point, jumptables were integrated into ghidralib core - so this
+    # code is now trivial. Internally this is implemented as a few lines
+    # of code that create a JumpTable object and write it.
+    inst.write_jumptable(destlist)
 
 
 switch_override(Program.location())

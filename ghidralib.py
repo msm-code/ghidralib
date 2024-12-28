@@ -32,16 +32,23 @@ from ghidra.program.model.pcode import (
     BlockGraph as GhBlockGraph,
     BlockCopy,
     HighFunction as GhHighFunction,
+    JumpTable,
 )
 from ghidra.program.model.lang import Register as GhRegister
 from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
-from ghidra.program.model.address import GenericAddress, AddressSet as GhAddressSet
+from ghidra.program.model.address import (
+    GenericAddress,
+    AddressSet as GhAddressSet,
+    AddressSpace,
+)
 from ghidra.app.decompiler import ClangTokenGroup as GhClangTokenGroup
 from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
 from ghidra.app.emulator import EmulatorHelper
 from ghidra.app.plugin.core.colorizer import ColorizingService
+from ghidra.app.plugin.assembler import Assemblers
+from ghidra.app.cmd.function import CreateFunctionCmd
 from ghidra.app.util import SearchConstants
 from java.awt import Color
 from __main__ import (
@@ -60,6 +67,7 @@ from __main__ import (
     removeSymbol,
     getCurrentProgram,
 )
+from java.util import ArrayList
 
 try:
     # For static type hints (won't work in Ghidra)
@@ -91,7 +99,7 @@ def _as_javaobject(raw):  # type: (Any) -> JavaObject
     return raw
 
 
-class GhidraWrapper:
+class GhidraWrapper(object):
     """The base class for all Ghidra wrappers.
 
     This function tries to be as transparent as possible - for example, it will
@@ -138,9 +146,13 @@ class GhidraWrapper:
                     )
                 )
 
-        self.__str__ = raw.__str__
-        self.__repr__ = raw.__repr__
         self.raw = _as_javaobject(raw)  # type: JavaObject
+
+    def __str__(self):  # type: () -> str
+        return self.raw.__str__()
+
+    def __repr__(self):  # type: () -> str
+        return self.raw.__repr__()
 
     def __tojava__(self, klass):
         """Make it possible to pass this object to Java methods"""
@@ -705,6 +717,12 @@ class Varnode(GhidraWrapper):
     @property
     def is_hash(self):  # type: () -> bool
         return self.raw.isHash()
+
+    @property
+    def is_stack(self):  # type: () -> bool
+        spaceid = self.raw.getSpace()
+        spacetype = AddressSpace.ID_TYPE_MASK & spaceid
+        return spacetype == AddressSpace.TYPE_STACK
 
     def rename(self, new_name):  # type: (str) -> None
         """Try to rename the current varnode. This only makes sense for variables."""
@@ -1341,7 +1359,6 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get the flow type of this instruction.
 
         For example, for x86 JMP this will return RefType.UNCONDITIONAL_JUMP"""
-        # TODO this is FlowType, not RefType.
         return FlowType(self.raw.getFlowType())
 
     # int opIndex, Address refAddr, RefType type, SourceType sourceType
@@ -1349,7 +1366,6 @@ class Instruction(GhidraWrapper, BodyTrait):
         self, op_ndx, ref_addr, ref_type, src_type=SourceType.USER_DEFINED
     ):  # type: (int, Addr, RefType, SourceType) -> None
         """Add a reference to an operand of this instruction."""
-        # TODO: wrap SourceType too, someday?
         self.raw.addOperandReference(op_ndx, resolve(ref_addr), ref_type.raw, src_type)
 
     @property
@@ -1359,20 +1375,60 @@ class Instruction(GhidraWrapper, BodyTrait):
 
     @property
     def fallthrough_override(self):  # type: () -> int|None
-        """Get the override for the fallthrough address, if any"""
+        """Get the fallthrough address override, if any.
+
+        Fallthrough override is the next instruction that will be executed after this
+        instruction, assuming the current instruction doesn't jump anywhere."""
         fall = self.raw.getFallThrough()
         if not fall:
             return None
         return fall.getOffset()
 
-    # TODO: doesn't work?
     @fallthrough_override.setter
     def fallthrough_override(self, value):  # type: (Addr) -> None
+        """Override the fallthrough address for this instruction.
+
+        This sets the next instruction that will be executed after this
+        instruction, assuming the current instruction doesn't jump anywhere.
+
+        :param value: new fallthrough address"""
         self.raw.setFallThrough(resolve(value))
 
     @fallthrough_override.deleter
     def fallthrough_override(self):  # type: () -> None
+        """This clears the fallthrough override for this instruction."""
         self.raw.clearFallThroughOverride()
+
+    def clear_fallthrough_override(self):  # type: () -> None
+        """This clears the fallthrough override for this instruction.
+
+        Alias for del self.fallthrough_override"""
+        del self.fallthrough_override
+
+    def write_jumptable(self, targets):  # type: (list[Addr]) -> None
+        """Provide a list of addresses where this instruction may jump.
+
+        Warning: For this to work, the instruction must be a part of a function.
+
+        This is useful for fixing unrecognised switches, for example.
+
+        Note: the new switch instruction will use all references of type
+        COMPUTED_JUMP already defined for the instruction
+        (maybe we should clear them first?)."""
+
+        targets = [resolve(addr) for addr in targets]
+
+        for dest in targets:
+            self.add_operand_reference(0, dest, RefType.COMPUTED_JUMP)
+
+        func = Function.get(self.address)
+        if func is None:
+            raise RuntimeError("Instruction is not part of a function")
+
+        targetlist = ArrayList(dest for dest in targets)
+        jumpTab = JumpTable(toAddr(self.address), targetlist, True)
+        jumpTab.writeOverride(func)
+        CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, monitor)
 
 
 class AddressRange(GhidraWrapper):
@@ -1741,6 +1797,13 @@ class Variable(GhidraWrapper):
         return SourceType(self.raw.getSource())
 
     @property
+    def varnode(self):  # type: () -> Varnode
+        """Get the first varnode associated with this variable.
+
+        Warning: there may be more than one varnode associated with a variable."""
+        return Varnode(self.raw.getFirstStorageVarnode())
+
+    @property
     def varnodes(self):  # type: () -> list[Varnode]
         """Get all varnodes associated with this variable."""
         storage = self.raw.getVariableStorage()
@@ -1806,15 +1869,20 @@ class FunctionCall(BodyTrait):
         """Get the function being called."""
         return self.called_function
 
-    def emulate(self):  # type: () -> Emulator
-        """Emulate the basic block of this function call, and return the state
+    def infer_context(self):  # type: () -> Emulator
+        """Emulate the code before this function call, and return the state.
 
-        This is emulating a setup to the function (recovers the parameters),
-        NOT the function call itself. If you want to emulate the function
-        call, create a new Emulator object, set the appropriate registers/memory,
-        and call .emulate(start, end) on it.
+        The goal of this function is to recover the state of the CPU
+        before the function call, as well as possible. This will work well in case
+        the assembly looks like, for example:
 
-        TODO for the future - implement an easy way to emulate the call.
+            mov eax, 30
+            mov ebx, DAT_encrypted_string
+            call decrypt_string
+
+        Then recovering eax them is as simple as call.infer_context()["eax"]. This
+        will NOT work well, if the parameters are initialized much earlier. In this
+        case consider using (much slower) infer_args() instead.
         """
         basicblock = BasicBlock(self.address)
         emu = Emulator()
@@ -1853,7 +1921,7 @@ class FunctionCall(BodyTrait):
             return []
         return op.inputs[1:]  # skip function addr
 
-    def get_args(self, emulate=True):  # type: (bool) -> list[int|None]
+    def infer_args(self):  # type: () -> list[int|None]
         """Get a list of the arguments passed to this function call, as integers.
 
         This method tries to get arguments of this function, as seen by Ghidra
@@ -1862,15 +1930,18 @@ class FunctionCall(BodyTrait):
 
         Warning: this works on decompiled functions only, so it will work
           if the call is done from a region not recognised as function.
-        Warning: this method needs to decompile the function, and is therefore slow."""
+        Warning: this method needs to decompile the function, and is therefore slow.
+
+        :param method: Pass None to use the default method. Currently no other methods
+        are supported.
+        """
         basicblock = BasicBlock(self.address)
 
         state = {}
-        if emulate:
-            # Almost no reason not to emulate - it takes some time, but it's
-            # nothing compared to generating high pcode (required for getting args).
-            emu = Emulator()
-            state = emu.propagate_varnodes(basicblock.start_address, self.address)
+        # Almost no reason not to emulate - it takes some time, but it's
+        # nothing compared to generating high pcode (required for getting args).
+        emu = Emulator()
+        state = emu.propagate_varnodes(basicblock.start_address, self.address)
 
         args = []
         for varnode in self.high_varnodes:
@@ -2282,6 +2353,39 @@ class Function(GhidraWrapper, BodyTrait):
                     g.edge(block, dest)
         return g
 
+    def emulate(self, *args, **kwargs):  # type: (int, Emulator) -> Emulator
+        """Emulate the function call with the given arguments.
+
+        The arguments are passed using a calling convention defined in Ghidra. If
+        you want to use a different calling convention, or do additional setup,
+        you have to use the Emulator class directly.
+
+        You can pass your own emulator using the `emulator` kwarg. You can use this
+        to do a pre-call setup (for example, write string parameters to memory). But
+        don't use this to change call parameters, as they are always overwriten.
+
+        :param args: The arguments to pass to the function.
+        :param kwargs: pass `emulator` kwarg to use the provided emulator
+          (default: create a new one)."""
+        if "emulator" in kwargs:
+            # Jython doesn't support keyword arguments after args, apparently
+            emulator = kwargs["emulator"]
+        else:
+            emulator = Emulator()
+
+        if len(args) != len(self.raw.getParameters()):
+            raise ValueError(
+                "Wrong number of arguments for {} - got {} expected {}".format(
+                    self.name, len(args), len(self.raw.getParameters())
+                )
+            )
+
+        for param, value in zip(self.parameters, args):
+            emulator.write_varnode(param.varnode, value)
+
+        emulator.emulate_while(self.entrypoint, lambda e: e.pc in self.body)
+        return emulator
+
 
 class Symbol(GhidraWrapper):
     """Wraps a Ghidra Symbol object."""
@@ -2492,15 +2596,22 @@ class Emulator(GhidraWrapper):
         raw = EmulatorHelper(Program.current())
         GhidraWrapper.__init__(self, raw)
 
+        # Use max_addr/2-0x8000 as stack pointer - this is 0x7fff8000 on 32-bit CPU.
+        max_pointer = toAddr(0).getAddressSpace().getMaxAddress().getOffset()
+        stack_off = (max_pointer >> 1) - 0x8000
+        self.raw.writeRegister(self.raw.getStackPointerRegister(), stack_off)
+
+        # TODO: add a simple allocation manager
+
     @property
-    def pc(self):  # type: () -> Addr
+    def pc(self):  # type: () -> int
         """Get the program counter of the emulated program."""
-        return self.raw.getExecutionAddress()
+        return self.raw.getExecutionAddress().getOffset()
 
     def set_pc(self, address):  # type: (Addr) -> None
         """Set the program counter of the emulated program."""
         pc = self.raw.getPCRegister()
-        self.raw.writeRegister(pc, address)
+        self.raw.writeRegister(pc, resolve(address).getOffset())
 
     def __getitem__(self, reg):  # type: (Reg|int) -> int
         """Read the register of the emulated program.
@@ -2533,19 +2644,17 @@ class Emulator(GhidraWrapper):
         :param reg: the register to read from."""
         return self.raw.readRegister(reg)
 
-    def get_bytes(self, address, length):  # type: (Addr, int) -> str
-        """An alias for `read_memory`.
+    def read_bytes(self, address, length):  # type: (Addr, int) -> str
+        """An alias for `read_bytes`.
 
-            >>> emulator.write_memory(0x1000, "1")
-            >>> emulator.get_bytes(0x1000, 1)
+            >>> emulator.write_bytes(0x1000, "1")
+            >>> emulator.read_bytes(0x1000, 1)
             '1'
 
         :param address: the address to read from
         :param length: the length to read"""
         bytelist = self.raw.readMemory(resolve(address), length)
         return "".join(chr(x % 256) for x in bytelist)
-
-    read_memory = get_bytes
 
     def read_u8(self, address):  # type: (Addr) -> int
         """Read a byte from the emulated program.
@@ -2555,7 +2664,7 @@ class Emulator(GhidraWrapper):
             13
 
         :param address: the address to read from"""
-        return from_bytes(self.read_memory(address, 1))
+        return from_bytes(self.read_bytes(address, 1))
 
     def read_u16(self, address):  # type: (Addr) -> int
         """Read a 16bit unsigned integer from the emulated program.
@@ -2565,7 +2674,7 @@ class Emulator(GhidraWrapper):
             123
 
         :param address: the address to read from"""
-        return from_bytes(self.read_memory(address, 2))
+        return from_bytes(self.read_bytes(address, 2))
 
     def read_u32(self, address):  # type: (Addr) -> int
         """Read a 32bit unsigned integer from the emulated program.
@@ -2575,7 +2684,7 @@ class Emulator(GhidraWrapper):
             123
 
         :param address: the address to read from"""
-        return from_bytes(self.read_memory(address, 4))
+        return from_bytes(self.read_bytes(address, 4))
 
     def read_u64(self, address):  # type: (Addr) -> int
         """Read a 64bit unsigned integer from the emulated program.
@@ -2585,7 +2694,70 @@ class Emulator(GhidraWrapper):
             123
 
         :param address: the address to read from"""
-        return from_bytes(self.read_memory(address, 8))
+        return from_bytes(self.read_bytes(address, 8))
+
+    def read_cstring(self, address):  # type: (Addr) -> str
+        """Read a null-terminated string from the emulated program.
+
+        This function reads bytes until a nullbyte is encountered.
+
+            >>> emu.read_cstring(0x1000)
+            'Hello, world!'
+
+        :param address: address from which to start reading."""
+        addr = resolve(address)
+        string = ""
+        while True:
+            c = read_u8(addr)
+            if c == 0:
+                break
+            string += chr(c)
+            addr = addr.add(1)
+        return string
+
+    def read_unicode(self, address):  # type: (Addr) -> str
+        """Read a null-terminated utf-16 string from the emulated program.
+
+        This function reads bytes until a null character is encountered.
+
+            >>> emu.read_unicode(0x1000)
+            'Hello, world!'
+
+        :param address: address from which to start reading."""
+        addr = resolve(address)
+        string = ""
+        while True:
+            c = read_u16(addr)
+            if c == 0:
+                break
+            string += chr(c)
+            addr = addr.add(2)
+        return string
+
+    def read_varnode(self, varnode):  # type: (Varnode) -> int
+        """Read from the varnode from the emulated program.
+
+        This method can't read hash varnodes.
+
+        :param varnode: the varnode to read from."""
+        varnode = Varnode(varnode)
+        if varnode.is_constant:
+            return varnode.value
+        elif varnode.is_address:
+            rawnum = self.read_bytes(varnode.offset, varnode.size)
+            return from_bytes(rawnum)
+        elif varnode.is_unique:
+            space = Program.current().getAddressFactory().getUniqueSpace()
+            offset = space.getAddress(varnode.offset)
+            rawnum = self.read_bytes(offset, varnode.size)
+            return from_bytes(rawnum)
+        elif varnode.is_stack:
+            return self.raw.readStackValue(varnode.offset, varnode.size, False)
+        elif varnode.is_register:
+            language = Program.current().getLanguage()
+            reg = language.getRegister(varnode.raw.getAddress(), varnode.size)
+            return self.read_register(reg)
+        raise RuntimeError("Unsupported varnode type")
 
     def write_register(self, reg, value):  # type: (Reg, int) -> None
         """Write to the register of the emulated program.
@@ -2598,11 +2770,11 @@ class Emulator(GhidraWrapper):
         :param value: the value to write"""
         self.raw.writeRegister(reg, value)
 
-    def write_memory(self, address, value):  # type: (Addr, str) -> None
+    def write_bytes(self, address, value):  # type: (Addr, str) -> None
         """Write to the memory of the emulated program.
 
-            >>> emulator.write_memory(0x1000, "1")
-            >>> emulator.read_memory(0x1000, 1)
+            >>> emulator.write_bytes(0x1000, "1")
+            >>> emulator.read_bytes(0x1000, 1)
             '1'
 
         :param address: the address to write to
@@ -2618,7 +2790,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to"""
         assert 0 <= value < 2**8, "value out of range"
-        self.write_memory(address, chr(value))
+        self.write_bytes(address, chr(value))
 
     def write_u16(self, address, value):  # type: (Addr, int) -> None
         """Write a 16bit unsigned integer to the emulated program.
@@ -2629,7 +2801,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to"""
         assert 0 <= value < 2**16, "value out of range"
-        self.write_memory(address, to_bytes(value, 2))
+        self.write_bytes(address, to_bytes(value, 2))
 
     def write_u32(self, address, value):  # type: (Addr, int) -> None
         """Write a 32bit unsigned integer to the emulated program.
@@ -2640,7 +2812,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to"""
         assert 0 <= value < 2**32, "value out of range"
-        self.write_memory(address, to_bytes(value, 4))
+        self.write_bytes(address, to_bytes(value, 4))
 
     def write_u64(self, address, value):  # type: (Addr, int) -> None
         """Write a 64bit unsigned integer to the emulated program.
@@ -2651,7 +2823,31 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to"""
         assert 0 <= value < 2**64, "value out of range"
-        self.write_memory(address, to_bytes(value, 8))
+        self.write_bytes(address, to_bytes(value, 8))
+
+    def write_varnode(self, varnode, value):  # type: (Varnode, int) -> None
+        """Set a varnode value in the emulated context.
+
+        This method can't set hash and constant varnodes.
+
+        :param varnode: the varnode to read from."""
+        varnode = Varnode(varnode)
+        if varnode.is_constant:
+            raise ValueError("Can't set value of a constant varnodes")
+        elif varnode.is_address:
+            self.write_bytes(varnode.offset, to_bytes(value, varnode.size))
+        elif varnode.is_unique:
+            space = Program.current().getAddressFactory().getUniqueSpace()
+            offset = space.getAddress(varnode.offset)
+            self.write_bytes(offset, to_bytes(value, varnode.size))
+        elif varnode.is_stack:
+            self.raw.writeStackValue(varnode.offset, varnode.size, value)
+        elif varnode.is_register:
+            language = Program.current().getLanguage()
+            reg = language.getRegister(varnode.raw.getAddress(), varnode.size)
+            self.raw.writeRegister(reg, value)
+        else:
+            raise RuntimeError("Unsupported varnode type")
 
     def emulate(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
         """Emulate from start to end address.
@@ -2659,9 +2855,9 @@ class Emulator(GhidraWrapper):
         This method will set a breakpoint at the end address, and clear it after
         the emulation is done.
 
-            >>> emulator.write_memory(0x1000, "1")
+            >>> emulator.write_bytes(0x1000, "1")
             >>> emulator.emulate(0x1000, 0x1005)
-            >>> emulator.read_memory(0x1000, 1)
+            >>> emulator.read_bytes(0x1000, 1)
             '0'
 
         :param start: the start address to emulate
@@ -2685,25 +2881,32 @@ class Emulator(GhidraWrapper):
             err = self.raw.getLastError()
             raise RuntimeError("Error when running: {}".format(err))
 
-    def read_varnode(self, varnode):  # type: (Varnode) -> int
-        """Read from the varnode of the emulated program.
+    def emulate_while(
+        self, start, condition
+    ):  # type: (Addr, Callable[[Emulator], bool]) -> None
+        """Emulate from start as long as condition is met and emulator does't halt.
 
-        This method can't read hash and unique varnodes"""
-        if varnode.is_constant:
-            return varnode.value
-        elif varnode.is_address:
-            rawnum = self.raw.readMemory(varnode.offset, varnode.size)
-            return from_bytes(rawnum)
-        elif varnode.is_unique:
-            space = Program.current().getAddressFactory().getUniqueSpace()
-            offset = space.getAddress(varnode.offset)
-            rawnum = self.raw.readMemory(offset, varnode.size)
-            return from_bytes(rawnum)
-        elif varnode.is_register:
-            language = Program.current().getLanguage()
-            reg = language.getRegister(varnode.raw.getAddress(), varnode.size)
-            return self.raw.readRegister(reg)
-        raise RuntimeError("Unsupported varnode type")
+            >>> emulator.write_bytes(0x1000, "1")
+            >>> emulator.emulate_while(0x1000, lambda e: e.pc != 0x1005)
+            >>> emulator.read_bytes(0x1000, 1)
+            '0'
+
+        Note: This is slower than emulate(), because the emulation loop is
+        implemented in Python.
+
+        :param start: the start address to emulate
+        :param condition: a function that takes an Emulator instance as a parameter,
+          and decides if emulation should be continued"""
+        self.set_pc(start)
+        emu = self.raw.getEmulator()
+        emu.setHalt(False)
+
+        while not emu.getHalt() and condition(self):
+            emu.executeInstruction(True, monitor)
+
+        if self.raw.getLastError() is not None:
+            err = self.raw.getLastError()
+            raise RuntimeError("Error when running: {}".format(err))
 
     def trace(
         self, start, end, callback, maxsteps=2**48
@@ -2933,6 +3136,43 @@ def disassemble_at(
     return disassemble_bytes(data, address, _max_instr)
 
 
+def assemble_at(address, instructions):  # type: (Addr, str|list[str]) -> None
+    """Assemble the given instructions and write them at the given address.
+
+    Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
+    For example, use "MOV EAX, EBX" instead of "mov eax, ebx".
+
+    :param address: the address where to write the instructions
+    :param instructions: a list of instructions, or a single instruction to assemble"""
+    # Note: Assembler API is actually quite user-friendly and doesn't require
+    # wrapping. But let's wrap it for consistency.
+    address = resolve(address)
+    asm = Assemblers.getAssembler(Program.current())
+    asm.assemble(address, instructions)
+
+
+def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> str
+    """Assemble the given instructions and return them as an array of bytes.
+
+    Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
+    For example, use "MOV EAX, EBX" instead of "mov eax, ebx".
+
+    Note: Address is required, because instruction bytes may depend on the location.
+
+    :param address: the address to use as a base for instructions
+    :param instructions: a list of instructions, or a single instruction to assemble"""
+    # Note: Assembler API is actually quite user-friendly and doesn't require
+    # wrapping. But let's wrap it for consistency.
+    addr_obj = resolve(address)
+    asm = Assemblers.getAssembler(Program.current())
+    if isinstance(instructions, Str):
+        return to_bytestring(asm.assembleLine(addr_obj, instructions))
+    result = ""
+    for instr in instructions:
+        result += to_bytestring(asm.assembleLine(addr_obj.add(len(result)), instr))
+    return result
+
+
 def get_string(address):  # type: (Addr) -> str|None
     """Get the string defined at the given address.
 
@@ -2955,20 +3195,41 @@ def read_cstring(address):  # type: (Addr) -> str
     """Read a null-terminated string from Ghidra memory.
 
     This function ignores metadata available to Ghidra and just reads
-    the bytes until a nullbyt is encountered.
+    the bytes until a nullbyte is encountered.
 
         >>> read_cstring(0x1000)
         'Hello, world!'
 
     :param address: address from which to start reading."""
-    address = resolve_to_int(address)
+    addr = resolve(address)
     string = ""
     while True:
-        c = read_u8(address)
+        c = read_u8(addr)
         if c == 0:
             break
         string += chr(c)
-        address += 1
+        addr = addr.add(1)
+    return string
+
+
+def read_unicode(address):  # type: (Addr) -> str
+    """Read a null-terminated utf-16 string from Ghidra memory.
+
+    This function ignores metadata available to Ghidra and just reads
+    the bytes until a null character is encountered.
+
+        >>> read_unicode(0x1000)
+        'Hello, world!'
+
+    :param address: address from which to start reading."""
+    addr = resolve(address)
+    string = ""
+    while True:
+        c = read_u16(addr)
+        if c == 0:
+            break
+        string += chr(c)
+        addr = addr.add(2)
     return string
 
 
