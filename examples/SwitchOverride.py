@@ -12,10 +12,10 @@ from ghidralib import *
 
 
 def is_computed_branch(inst):  # type: (Instruction) -> bool
-    if inst.flow.is_jump and inst.flow.is_computed:
+    if inst.flow_type.is_jump and inst.flow_type.is_computed:
         return True
 
-    if inst.flow.is_call:
+    if inst.flow_type.is_call:
         for xref in inst.xrefs_from:
             if xref.is_call:
                 func = Function.get(xref.to_address)
@@ -45,6 +45,5 @@ def switch_override(addr):  # type: (Addr) -> None
     # code is now trivial. Internally this is implemented as a few lines
     # of code that create a JumpTable object and write it.
     inst.write_jumptable(destlist)
-
 
 switch_override(Program.location())

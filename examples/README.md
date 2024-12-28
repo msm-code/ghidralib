@@ -16,15 +16,18 @@ Scripts here are often rewritten Ghidra examples, or very small deobfuscation sc
 
 ## Everyday use
 
-* [ContextRecovery](./ContextRecovery.py): Iterates over calls to the string
+* [Context Recovery](./ContextRecovery.py): Iterates over calls to the string
   deobfuscation function, recovers the call parameters, and decrypts
   the obfuscated strings.
-* [FixUnaffectedRegisters](./FixUnaffectedRegisters.py): Fix broken "unaffected" registers
+* [Fix "Unaffected" Registers](./FixUnaffectedRegisters.py): Fix broken "unaffected" registers
   in the whole program by traversing the call graph and editing function signatures.
-* [RecoverFunctionPointers](./RecoverFunctionPointers.py): Recovering function pointers.
+* [Recover Function Pointers](./RecoverFunctionPointers.py): Recovering function pointers.
   Iterate over MOVs in a function, and use the decompilation of the function referenced
   by the second MOV operand to automatically rename and retype the function pointer from the
   first parameter. And all of that in just ~20 lines of code!
+* [Lumma Pattern Based Deobfuscation](./LummaPatternBasedDeobfuscation.py): A deobfuscation
+  script that uses a byte pattern finder and assembly patching engine to easily overcome
+  one of Lumma stealer obfuscation techniques.
 
 ## Fancy things
 
