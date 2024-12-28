@@ -182,17 +182,20 @@ print(Function(&quot;main&quot;).decompile())
 # Define a function at address 0x400300
 Function.create(0x400300, &quot;main&quot;)
 
-# Print a value of eax and edx at each call of this function
+# Infer a value of eax and edx at each call of this function
 for call in Function(&quot;MyCustomCrypto&quot;).calls:
-    ctx = call.emulate()
+    ctx = call.infer_context()
     key, data = ctx[&quot;eax&quot;], ctx[&quot;edx&quot;]
     print(key, data)
 
-# Print parameters of each call to this function, as seen by
-# the decompiler
+# Infer parameters for each call to this function (using the decmopiler)
 for call in Function(&quot;MyCustomCrypto&quot;).calls:
     key, data = call.get_args()
     print(key, data)
+
+# Emulate a function call and pass parameters (using the function signature)
+ctx = Function(&quot;GetFuncNameByHash&quot;).emulate(0x698766968)
+print(ctx.read_cstring(ctx[&quot;eax&quot;]))
 </code></pre>
 <p>Read more in the <a href="../reference/#ghidralib.Function"><code>Function</code> object documentation</a>.</p>
 <h3 id="instruction">Instruction</h3>
@@ -314,10 +317,15 @@ things you can do with ghidralib.</p>
 <h3 id="emulation">Emulation</h3>
 <p>Emulate the program from 0x400300 to 0x400400. When finished, read the value of <code>eax</code>
 and the memory at 0x401000.</p>
-<pre><code class="language-python">emu = Emulator()
-emu.emulate(0x400300, 0x400300 + 0x100)
+<pre><code class="language-python"># Create a new emulator and execute code between 0x400300 and 0x400400
+emu = Emulator()
+emu.emulate(0x400300, 0x400400)
 print(emu[&quot;eax&quot;])
-print(emu.read_memory(0x401000, 16))
+print(emu.read_bytes(0x401000, 16))
+
+# Emulate a function call and pass parameters (using the function signature)
+ctx = Function(&quot;GetFuncNameByHash&quot;).emulate(0x698766968)
+print(ctx.read_cstring(ctx[&quot;eax&quot;]))
 </code></pre>
 <p>In practice you can often use this for recovering obfuscated strings, or unpacking
 simple packers.</p>
