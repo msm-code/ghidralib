@@ -7,6 +7,6 @@
 
 from ghidralib import *
 
-func = Function(currentAddress)
+func = Function(Program.location())
 for op in func.high_pcode:
     print(op)

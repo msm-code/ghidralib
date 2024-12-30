@@ -21,7 +21,7 @@ def decode(dat):
 
 
 for call in Function("MyCustomCrypto").calls:
-    ctx = call.emulate()
+    ctx = call.infer_context()
     key, data = ctx["eax"], ctx["edx"]
     if key and data:
         datalen = read_u32(data - 4)

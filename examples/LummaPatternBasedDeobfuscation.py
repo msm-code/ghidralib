@@ -1,7 +1,7 @@
 # Licensed under Apache 2.0
 #
 # Lumma features a lot of obfuscation techniques. This script tackles the
-# following, which is one of the most problematic as it obfuscates the control flow:
+# following, which the most problematic as it obfuscates the control flow:
 # 
 # 8b 04 85 18 6b 44 00  MOV  EAX, dword ptr [EAX*0x4 + DAT_00446b18]
 # b9 e4 b2 85 35        MOV  ECX, 0x3585b2e4
@@ -12,7 +12,7 @@
 # ff e1                 JMP  ECX
 #
 # At the start of this pattern, EAX may be either 0 or 1, so this works as an if-else
-# statement. But proving this is problematic for decompilers, including Ghidra, so
+# statement. But getting this right is hard for decompilers, including Ghidra, so
 # we need to give her a hand.
 #
 # This script looks for that byte pattern (with wildcard for constants and registers),

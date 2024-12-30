@@ -28,6 +28,9 @@ Scripts here are often rewritten Ghidra examples, or very small deobfuscation sc
 * [Lumma Pattern Based Deobfuscation](./LummaPatternBasedDeobfuscation.py): A deobfuscation
   script that uses a byte pattern finder and assembly patching engine to easily overcome
   one of Lumma stealer obfuscation techniques.
+* [Asm Level Data Flow](./AsmLevelDataFlow.py): Simple data flow analysis at the x86 assembly level.
+  This script analyses a function, and looks for the "LEA ECX, [source]" instructions followed later
+  by "MOV [target], EAX", and then creates a label at `[target]` called `ptr_[source_string_name]`.
 
 ## Fancy things
 
