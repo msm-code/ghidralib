@@ -69,6 +69,7 @@ from __main__ import (
     disassemble,
 )
 from java.util import ArrayList
+from array import array
 
 __version__ = "0.1.0"
 
@@ -307,6 +308,21 @@ class Graph(GenericT, GhidraWrapper):
         description = description or "Graph"
         graphtype = GraphType(name, description, [], [])
         return Graph(AttributedGraph(name, graphtype, description))
+
+    @staticmethod
+    def construct(vertexlist, getedges):  # type: (list[T], Callable[[T], list[T]]) -> Graph[T]
+        """Create a new Graph from a list of vertices and a function to get edges.
+
+        :param vertexlist: The list of vertices.
+        :param getedges: A function that gets a list of destinations from a vertex."""
+        g = Graph.create()
+        for v in vertexlist:
+            g.vertex(v)
+        for v in vertexlist:
+            for dest in getedges(v):
+                if dest in g:
+                    g.edge(v, dest)
+        return g
 
     def __contains__(self, vtx):  # type: (T) -> bool
         """Check if a given vertex exists in this graph.
@@ -1017,6 +1033,17 @@ class HighFunction(GhidraWrapper):
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps()]
 
     @property
+    def data_flow(self):  # type: () -> Graph[PcodeOp]
+        g = Graph.create()
+        for op in self.pcode:
+            if op.output:
+                for inp in op.inputs:
+                    g.vertex(op.output)
+                    g.vertex(inp)
+                    g.edge(inp, op.output)
+        return g
+
+    @property
     def basicblocks(self):  # type: () -> list[PcodeBlock]
         """Get a list of basic blocks in this high function."""
         return [PcodeBlock(raw) for raw in self.raw.getBasicBlocks()]
@@ -1042,6 +1069,11 @@ class HighFunction(GhidraWrapper):
         decompiler.openProgram(Program.current())
         outgraph = decompiler.structureGraph(ingraph, 0, monitor)
         return BlockGraph(outgraph)
+
+    @property
+    def varnodes(self):  # type: () -> list[Varnode]
+        """Get all varnodes used in this function."""
+        return [Varnode(raw) for raw in self.raw.locRange()]
 
     @property
     def symbols(self):  # type: () -> list[HighSymbol]
@@ -1344,24 +1376,42 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get the length of this instruction in bytes."""
         return self.length
 
-    def operand(self, ndx):  # type: (int) -> int
+    def __convert_operand(self, operand):  # type: (JavaObject) -> int|str|list
+        """Convert an operand to a scalar or address."""
+        from ghidra.program.model.address import Address  # type: ignore
+        from ghidra.program.model.scalar import Scalar  # type: ignore
+        if isinstance(operand, GhRegister):
+            return operand.getName()
+        elif isinstance(operand, Address):
+            return operand.getOffset()
+        elif isinstance(operand, Scalar):
+            return operand.getValue()
+        elif isinstance(operand, array):
+            operands = [self.__convert_operand(o) for o in operand]
+            if len(operands) == 1:
+                # Unwrap the operands if there is only one operand
+                return operands[0]
+            return operands
+        else:
+            raise RuntimeError("Don't know how to read operand {}".format(operand))
+
+
+    def operand(self, ndx):  # type: (int) -> int|str|list[int|str]
         """Get the nth operand of this instruction as a scalar."""
-        scalar = self.raw.getScalar(ndx)
-        if scalar:
-            return scalar.getValue()
-        addr = self.raw.getAddress(ndx)
-        if addr:
-            return addr.getOffset()
-        reg = self.raw.getRegister(ndx)
-        if reg:
-            return reg.getName()
-        obj = addr.getOpObjects(ndx)
-        raise RuntimeError("Don't know how to read operand {}", obj)
+        operand = self.raw.getOpObjects(ndx)
+        return self.__convert_operand(operand)
+
+    def list(self, ndx):  # type: (int) -> list[int|str]
+        """Get the nth operand of this instruction as a list."""
+        out = self.operand(ndx)
+        if not isinstance(out, list):
+            raise RuntimeError("Operand {} is not a list".format(ndx))
+        return out
 
     def scalar(self, ndx):  # type: (int) -> int
         """Get the nth operand of this instruction as a scalar."""
         out = self.operand(ndx)
-        if not isinstance(out, int):
+        if not isinstance(out, (int, long)):
             raise RuntimeError("Operand {} is not a scalar".format(ndx))
         return out
 
@@ -2373,14 +2423,7 @@ class Function(GhidraWrapper, BodyTrait):
 
         In other words, get a graph that represents how the control flow
         can move between basic blocks in this function."""
-        g = Graph.create()
-        for block in self.basicblocks:
-            g.vertex(block)
-        for block in self.basicblocks:
-            for dest in block.destinations:
-                if dest in g:
-                    g.edge(block, dest)
-        return g
+        return Graph.construct(self.basicblocks, lambda v: v.destinations)
 
     def emulate(self, *args, **kwargs):  # type: (int, Emulator) -> Emulator
         """Emulate the function call with the given arguments.
@@ -2744,7 +2787,7 @@ class Emulator(GhidraWrapper):
         addr = resolve(address)
         string = ""
         while True:
-            c = read_u8(addr)
+            c = self.read_u8(addr)
             if c == 0:
                 break
             string += chr(c)
@@ -2763,7 +2806,7 @@ class Emulator(GhidraWrapper):
         addr = resolve(address)
         string = ""
         while True:
-            c = read_u16(addr)
+            c = self.read_u16(addr)
             if c == 0:
                 break
             string += chr(c)
@@ -3066,29 +3109,14 @@ class Program(GhidraWrapper):
     @staticmethod
     def call_graph():  # type: () -> Graph[Function]
         """Get the call graph for this program."""
-        g = Graph.create()
-        for func in Function.all():
-            g.vertex(func, func.name)
-        for func in Function.all():
-            for out in func.called:
-                if out.is_external:
-                    continue
-                g.edge(func, out)
-        return g
+        return Graph.construct(Function.all(), lambda f: f.called)
 
     @staticmethod
     def control_flow():  # type: () -> Graph[BasicBlock]
         """Get a graph representing the whole program control flow.
 
         Warning: This graph may be big, so don't try to display it."""
-        g = Graph.create()
-        for block in BasicBlock.all():
-            g.vertex(block, str(block.address))
-        for block in BasicBlock.all():
-            for dest in block.destinations:
-                if dest in g:
-                    g.edge(block, dest)
-        return g
+        return Graph.construct(BasicBlock.all(), lambda b: b.destinations)
 
     @staticmethod
     def basicblocks():  # type: () -> list[BasicBlock]
@@ -3458,13 +3486,17 @@ def _get_unique_string(obj):  # type: (object) -> str
     each object. Function will just return str(obj) for primitives,
     and for the rest it will try to return str(obj.address).
 
-    Warning: This function is an implemntation detail, and may be changed often.
+    Warning: This function is an implementation detail, and may be changed often.
 
     :param obj: the object to convert."""
     if isinstance(obj, Str):
         return obj
     elif isinstance(obj, (int, long)):
         return str(obj)
+    elif isinstance(obj, PcodeOp):
+        return str(obj.raw.getSeqnum())
+    elif isinstance(obj, Varnode):
+        return str(obj.raw)
     elif hasattr(obj, "address"):
         # So you can define your own way to convert an object to a string.
         return str(obj.address)  # type: ignore
