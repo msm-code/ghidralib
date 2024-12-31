@@ -310,7 +310,9 @@ class Graph(GenericT, GhidraWrapper):
         return Graph(AttributedGraph(name, graphtype, description))
 
     @staticmethod
-    def construct(vertexlist, getedges):  # type: (list[T], Callable[[T], list[T]]) -> Graph[T]
+    def construct(
+        vertexlist, getedges
+    ):  # type: (list[T], Callable[[T], list[T]]) -> Graph[T]
         """Create a new Graph from a list of vertices and a function to get edges.
 
         :param vertexlist: The list of vertices.
@@ -1034,6 +1036,14 @@ class HighFunction(GhidraWrapper):
 
     @property
     def data_flow(self):  # type: () -> Graph[PcodeOp]
+        """Get a data flow graph of varnodes in this function.
+
+        Note: I don't think this method is currently very useful, but you can
+        use it to easily get information about all varnodes that impact a value of
+        another varnode
+
+        :returns: A graph where vertexes are varnodes, and edges mean that
+        target varnode is a result of operation on source varnodes."""
         g = Graph.create()
         for op in self.pcode:
             if op.output:
@@ -1380,6 +1390,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Convert an operand to a scalar or address."""
         from ghidra.program.model.address import Address  # type: ignore
         from ghidra.program.model.scalar import Scalar  # type: ignore
+
         if isinstance(operand, GhRegister):
             return operand.getName()
         elif isinstance(operand, Address):
@@ -1394,7 +1405,6 @@ class Instruction(GhidraWrapper, BodyTrait):
             return operands
         else:
             raise RuntimeError("Don't know how to read operand {}".format(operand))
-
 
     def operand(self, ndx):  # type: (int) -> int|str|list[int|str]
         """Get the nth operand of this instruction as a scalar."""
@@ -1428,11 +1438,13 @@ class Instruction(GhidraWrapper, BodyTrait):
         return self.raw.getAddress().getOffset()
 
     @property
-    def operands(self):  # type: () -> list[int|str]
+    def operands(self):  # type: () -> list[int|str|list[int|str]]
         """Return operands as primitive values (int or a string representation).
 
         More specifically, this will convert constants and addresses into integers,
-        and for registers the name will be returned."""
+        and for registers the name will be returned.
+
+        If you know operand type, call .scalar(), .register() or .list() instead."""
         return [self.operand(i) for i in range(self.raw.getNumOperands())]
 
     @property
@@ -3274,7 +3286,6 @@ def assemble_at(
         for xref in instr.xrefs_from:
             if xref.is_call or xref.is_jump:
                 disassemble(toAddr(xref.to_address))
-
 
 
 def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> str

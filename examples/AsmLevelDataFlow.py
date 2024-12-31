@@ -27,10 +27,10 @@ f = Function(0x004d47f0)
 last_pointer = 0
 for op in f.instructions:
     if op.mnemonic == "LEA" and op.operand(0) == "ECX":
-        # Operands are ["ECX", [0xAAAAAAAA]], where 0xAAAAAAAA is a pointer to string
+        # Operands are ["ECX", 0xAAAAAAAA], where 0xAAAAAAAA is a pointer to string
         last_pointer = op.scalar(1)
     elif op.mnemonic == "MOV" and isinstance(op.operand(0), (int, long)):
-        # Operands are [[0xBBBBBBBB], "EAX"], where 0xBBBBBBBB is the target variable
+        # Operands are [0xBBBBBBBB, "EAX"], where 0xBBBBBBBB is the target variable
         target = op.scalar(0)
         ptrname = Symbol(last_pointer).name
         print("detected move of {} to {:x}".format(ptrname, target))
