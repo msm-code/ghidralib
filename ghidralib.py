@@ -50,6 +50,8 @@ from ghidra.app.plugin.core.colorizer import ColorizingService
 from ghidra.app.plugin.assembler import Assemblers
 from ghidra.app.cmd.function import CreateFunctionCmd
 from ghidra.app.util import SearchConstants
+from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
+from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
 from java.awt import Color
 from __main__ import (
     toAddr,
@@ -2086,6 +2088,44 @@ class ClangTokenGroup(GhidraWrapper):
         self._dump(self.raw)
 
 
+class SymbolicPropogator(GhidraWrapper):
+    """Wraps SymbolicPropogator. Can be used to get known values at various
+    locations in a given function (or outside of a function)"""
+
+    @staticmethod
+    def create():
+        return SymbolicPropogator(GhSymbolicPropogator(Program.current()))
+
+    def flow_constants(
+        self, addr, body, evaluator
+    ):  # type: (Addr, AddressSet, JavaObject) -> None
+        """Flow constants from the given address in the given body
+
+        :param addr: The address to start from
+        :param body: The body where constants should be propagated
+        :param evaluator: The evaluator to use for the propagation"""
+        addr = resolve(addr)
+        self.raw.flowConstants(addr, body.raw, evaluator, False, monitor)
+
+    def register_at(self, addr, register):  # type: (Addr, Reg) -> int|None
+        """Get a known register value at the given address (or None)
+
+        Warning: this value is signed.
+
+        :param addr: The address to get a register value at
+        :param register: The register to get a value for
+        :return: The value of the register at the given address, or None if the
+        register is not known at that address"""
+        addr = resolve(addr)
+        reg = Register(register)
+        value = self.raw.getRegisterValue(addr, reg.raw)
+        if not value or value.isRegisterRelativeValue():
+            # This never happens in my tests, so I just won't handle register-relative
+            # values. I don't know when this can ever happen.
+            return None
+        return value.value
+
+
 class Function(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Function object."""
 
@@ -2474,6 +2514,25 @@ class Function(GhidraWrapper, BodyTrait):
 
         emulator.emulate_while(self.entrypoint, lambda e: e.pc in self.body)
         return emulator
+
+    def symbolic_context(self):  # type: () -> SymbolicPropogator
+        """Returns a SymbolicPropogator instance for this function.
+
+        This can be used to get a known values of registers at various addresses.
+
+            >>> fnc = Function(0x004061EC)
+            >>> ctx = fnc.symbolic_context()
+            >>> print(ctx.register(0x004061fb, "eax"))
+
+        TODO: This method should implement a hack described in
+        https://github.com/NationalSecurityAgency/ghidra/issues/3581
+        because built-in Ghidra symbolic propagator doesn't support memory accesses.
+
+        :return: a SymbolicPropogator instance with this function context."""
+        propagator = SymbolicPropogator.create()
+        evaluator = ConstantPropagationContextEvaluator(monitor)
+        propagator.flow_constants(self.entrypoint, self.body, evaluator)
+        return propagator
 
 
 class Symbol(GhidraWrapper):

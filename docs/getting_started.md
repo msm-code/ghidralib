@@ -73,7 +73,7 @@ for block in Function("main").basicblocks:
 print(Function("main").high_variables)
 
 # Get the control flow graph of the main function...
-# ...and show it! (you can do something more useful instead)
+# ...and show it! (you can also do something more useful with it)
 Function("main").control_flow.show()
 
 # Decompile the main function and print the C code.
@@ -82,7 +82,7 @@ print(Function("main").decompile())
 # Define a function at address 0x400300
 Function.create(0x400300, "main")
 
-# Infer a value of eax and edx at each call of this function
+# Use symbolic execution to infer values of eax and edx at each call site
 for call in Function("MyCustomCrypto").calls:
     ctx = call.infer_context()
     key, data = ctx["eax"], ctx["edx"]
@@ -93,9 +93,19 @@ for call in Function("MyCustomCrypto").calls:
     key, data = call.get_args()
     print(key, data)
 
+# Rename functions calling this function
+for caller in Function("MyCustomCrypto").callers:
+    # Use caller address as a suffix. It's often useful to combine this with
+    # emulation, so you can put more context in the name.
+    caller.rename("CallsCustomCrypto_{}".format(caller.address))
+
 # Emulate a function call and pass parameters (using the function signature)
 ctx = Function("GetFuncNameByHash").emulate(0x698766968)
 print(ctx.read_cstring(ctx["eax"]))
+
+# Use Ghidra's SymbolicPropagator to get known register values
+ctx = Function(0x401000).symbolic_context()
+print(ctx.register_at(0x401020, "eax"))
 ```
 
 Read more in the [`Function` object documentation](reference.md#ghidralib.Function).
