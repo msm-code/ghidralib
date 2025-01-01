@@ -287,6 +287,9 @@ class Graph(GenericT, GhidraWrapper):
     strings for keys (and names). We have a way to convert objects we are
     interested in to strings - see _get_unique_string() method."""
 
+    # TODO: maybe this should be a GDirectedGraph, so we get some algorithms
+    # for free, and we can just convert it for display.
+
     def __init__(self, raw):  # type: (AttributedGraph) -> None
         """Create a new Graph wrapper.
 
