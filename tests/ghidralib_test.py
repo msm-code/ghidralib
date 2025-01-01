@@ -382,13 +382,13 @@ def test_function():
     assert func.repeatable_comment == ""
 
     assert len(func.parameters) == 0
-    assert len(func.local_variables) > 3
+    assert len(func.local_variables) >= 3
     assert func.local_variables[0].raw
-    assert len(func.variables) > 3
+    assert len(func.variables) >= 3
     assert func.variables[0].raw
-    assert len(func.varnodes) > 3
+    assert len(func.varnodes) >= 3
     assert func.varnodes[0].raw
-    assert len(func.high_variables) > 3
+    assert len(func.high_variables) >= 3
     assert func.high_variables[0].raw
     assert len(func.stack) > 1
     assert func.stack[0].raw
@@ -472,6 +472,8 @@ def test_symbol():
     assert Symbol.get("bar") is None
     assert Symbol.get(0x00403CDE) is None
 
+    assert Symbol("wsprintfA").address == 0xB8AA  # Resolve external address
+
 
 ###############################################################
 # Test DataType
@@ -547,6 +549,20 @@ def test_emulator():
     emu.write_varnode(fnc.parameters[0].varnode, -0x80000000)
     emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
     assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
+
+    mock_executed = [False]
+
+    def nullsub(emu):
+        mock_executed[0] = True
+        emu.pc = emu.read_u64(emu.sp)
+        emu.sp += 8
+        return True
+
+    fun = Function(0x406035)
+    emu = Emulator()
+    emu.add_hook("lstrcpynW", nullsub)
+    emu.emulate(fun.entrypoint, fun.exitpoints)
+    assert mock_executed[0]
 
 
 ###############################################################

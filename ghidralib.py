@@ -698,6 +698,9 @@ class Register(GhidraWrapper):
 class Varnode(GhidraWrapper):
     @property
     def has_value(self):  # type: () -> bool
+        """Return true if this varnode can be converted to a integer value.
+
+        In particuler, this will return true for Address and Constant varnodes"""
         return self.is_address or self.is_constant
 
     @property
@@ -799,11 +802,15 @@ class Varnode(GhidraWrapper):
         if self.has_value:
             return self.value
         elif self.is_register:
-            return self.as_register
+            if self.is_named_register:
+                return self.as_register
+            return "reg:{:x}:{:x}".format(self.offset, self.size)
         elif self.is_unique:
-            return "uniq:{:x}".format(self.offset)
+            return "uniq:{:x}:{:x}".format(self.offset, self.size)
         elif self.is_hash:
-            return "hash:{:x}".format(self.offset)
+            return "hash:{:x}:{:x}".format(self.offset, self.size)
+        elif self.is_stack:
+            return "stack:{:x}:{:x}".format(self.offset, self.size)
         raise RuntimeError("Unknown varnode type")
 
     @property
@@ -2552,10 +2559,22 @@ class Symbol(GhidraWrapper):
     """Wraps a Ghidra Symbol object."""
 
     @staticmethod
-    def __get_thunk_if_it_exists(external_symbol):  # type: (JavaObject) -> JavaObject
+    def resolve_thunk_if_exists(external_symbol):  # type: (JavaObject) -> JavaObject
         """Returns a function thunk leading to a passed external symbol, if it exists.
 
-        If there is no function thunk, original symbol is returned."""
+        If there is no function thunk, original symbol is returned.
+
+        Why is this ugly thing here? Well, we want to support external symbols,
+        especially external functions. Thunks are much more useful for us when
+        thinking in context of the analysed program - when Linux program calls
+        `printf` it jumps to the appropriate `printf` thunk, not to libc
+        directly. So this is the location that we want to patch/hook/trace/etc when
+        thinking about printf. But the thing is that Ghidra SymbolTable API will
+        not even return thunks! So we trace the external function references, and
+        return the first (almost certainly only) Thunk reference.
+
+        :param external_symbol: Symbol to find thunk for (if it exists).
+        """
         xrefs = list(external_symbol.getReferences())
         for xref in xrefs:
             if xref.getReferenceType() == GhRefType.THUNK:
@@ -2564,6 +2583,27 @@ class Symbol(GhidraWrapper):
                 if thunk is not None:
                     return thunk
         return external_symbol
+
+    @staticmethod
+    def resolve_external(external_symbol):  # type: (JavaObject) -> int
+        """Resolves an external address to a RAM location, if possible.
+
+        If the symbol has no RAM location, just return its offset.
+
+        Why is this ugly thing here? Again, we want to support external symbols, and
+        we are interested in their RAM address in the program address space. In some
+        cases, Ghidra will give an external address a "location" in the RAM space.
+        So, for example, if current program jumps to that external function (or read
+        that external variable etc), it will read that location as far as Ghidra is
+        concerned (for example, Emulator will use it for calls). This is important
+        for emulating Windows binaries, that use address tables for imports.
+
+        :param external_symbol: External symbol to resolve."""
+        external_manager = Program.current().getExternalManager()
+        ram_addr = external_manager.getExternalLocation(external_symbol).getAddress()
+        if ram_addr:
+            return ram_addr.getOffset()
+        return external_symbol.getAddress().getOffset()
 
     @staticmethod
     def get(raw_or_name):  # type: (JavaObject|str|Addr) -> Symbol|None
@@ -2582,7 +2622,7 @@ class Symbol(GhidraWrapper):
                 return None
             raw = symbols[0]
             if raw.isExternal():
-                raw = Symbol.__get_thunk_if_it_exists(raw)
+                raw = Symbol.resolve_thunk_if_exists(raw)
         elif can_resolve(raw_or_name):
             raw = (
                 Program.current()
@@ -2625,6 +2665,8 @@ class Symbol(GhidraWrapper):
     @property
     def address(self):  # type: () -> int
         """Get the address of this symbol."""
+        if self.is_external:
+            return Symbol.resolve_external(self.raw)
         return self.raw.getAddress().getOffset()
 
     @property
@@ -2812,11 +2854,11 @@ class Emulator(GhidraWrapper):
         self._hooks[addr] = hook
 
     def has_hook_at(self, address):  # type: (Addr) -> bool
-        addr = resolve(address)
+        addr = resolve(address).getOffset()
         return addr in self._hooks
 
     def delete_hook_at(self, address):  # type: (Addr) -> None
-        addr = resolve(address)
+        addr = resolve(address).getOffset()
         del self._hooks[addr]
 
     @property
