@@ -1271,6 +1271,8 @@ RefType.CALLOTHER_OVERRIDE_JUMP = RefType(GhRefType.CALLOTHER_OVERRIDE_JUMP)
 class FlowType(GhidraWrapper):
     """Wraps a Ghidra FlowType object"""
 
+    # TODO is class this necessary? This is just a subclass of RefType.
+
     @property
     def is_call(self):  # type: () -> bool
         """Return True if this flow is a call."""
@@ -1299,7 +1301,7 @@ class FlowType(GhidraWrapper):
     @property
     def is_terminal(self):  # type: () -> bool
         """Return True if this flow is a terminator."""
-        return self.raw.isTerminator()
+        return self.raw.isTerminal()
 
     @property
     def has_fallthrough(self):  # type: () -> bool
@@ -2183,6 +2185,14 @@ class Function(GhidraWrapper, BodyTrait):
         return self.entrypoint
 
     @property
+    def exitpoints(self):  # type: () -> list[int]
+        """Get a list of exit points for the function.
+
+        This will return a list of addresses of function terminators. For example,
+        if a function has two RETs, this function will return their addresses."""
+        return [i.address for i in self.instructions if i.flow_type.is_terminal]
+
+    @property
     def name(self):  # type: () -> str
         """Get the name of this function."""
         return self.raw.getName()
@@ -2542,10 +2552,27 @@ class Symbol(GhidraWrapper):
     """Wraps a Ghidra Symbol object."""
 
     @staticmethod
+    def __get_thunk_if_it_exists(external_symbol):  # type: (JavaObject) -> JavaObject
+        """Returns a function thunk leading to a passed external symbol, if it exists.
+
+        If there is no function thunk, original symbol is returned."""
+        xrefs = list(external_symbol.getReferences())
+        for xref in xrefs:
+            if xref.getReferenceType() == GhRefType.THUNK:
+                addr = xref.getFromAddress()
+                thunk = Program.current().getSymbolTable().getPrimarySymbol(addr)
+                if thunk is not None:
+                    return thunk
+        return external_symbol
+
+    @staticmethod
     def get(raw_or_name):  # type: (JavaObject|str|Addr) -> Symbol|None
         """Get a symbol with the provided name or at the provided address.
 
         Return None if the symbol was not found.
+
+        Note: when resolving by name, local symbols take precedence over external ones
+        (in particular for function thunks - in contrast to Ghidra default behaviour).
 
         :param raw_or_name: a Ghidra Java object, a string, or an address."""
         if isinstance(raw_or_name, str):
@@ -2554,6 +2581,8 @@ class Symbol(GhidraWrapper):
             if not symbols:
                 return None
             raw = symbols[0]
+            if raw.isExternal():
+                raw = Symbol.__get_thunk_if_it_exists(raw)
         elif can_resolve(raw_or_name):
             raw = (
                 Program.current()
@@ -2640,6 +2669,16 @@ class Symbol(GhidraWrapper):
 
         :param new_name: the new name of the symbol."""
         self.raw.setName(new_name, source)
+
+    @property
+    def is_external(self):  # type: () -> bool
+        """Return true if this symbol is external, otherwise false.
+
+        Note: when resolving by name, local symbols take precedence over external ones
+        (in particular for function thunks - in contrast to Ghidra default behaviour).
+
+        :return: true if the symbol is external"""
+        return self.raw.isExternal()
 
 
 class DataType(GhidraWrapper):
@@ -2751,20 +2790,72 @@ class Emulator(GhidraWrapper):
 
         # Use max_addr/2-0x8000 as stack pointer - this is 0x7fff8000 on 32-bit CPU.
         max_pointer = toAddr(0).getAddressSpace().getMaxAddress().getOffset()
-        stack_off = (max_pointer >> 1) - 0x8000
+        max_pointer = max_pointer % 2**64  # Java signed ints everywhere strike again.
+        stack_off = ((max_pointer + 1) >> 1) - 0x8000
         self.raw.writeRegister(self.raw.getStackPointerRegister(), stack_off)
 
         # TODO: add a simple allocation manager
+        self._hooks = {}  # type: dict[int, Callable[[Emulator], bool]]
+
+    def add_hook(
+        self, address, hook
+    ):  # type: (Addr, Callable[[Emulator], bool]) -> None
+        """Add a hook at a specified address.
+
+        Hook is a function that gets emulator as parameter, and returns a
+        "should_continue" bool.
+
+        Note: multiple hooks at the same address are not currently supported."""
+        addr = resolve(address).getOffset()
+        if addr in self._hooks:
+            raise ValueError("Multiple hooks at the same address are not supported")
+        self._hooks[addr] = hook
+
+    def has_hook_at(self, address):  # type: (Addr) -> bool
+        addr = resolve(address)
+        return addr in self._hooks
+
+    def delete_hook_at(self, address):  # type: (Addr) -> None
+        addr = resolve(address)
+        del self._hooks[addr]
 
     @property
     def pc(self):  # type: () -> int
         """Get the program counter of the emulated program."""
         return self.raw.getExecutionAddress().getOffset()
 
+    @pc.setter
+    def pc(self, address):  # type: (Addr) -> None
+        """Set the program counter of the emulated program."""
+        self.set_pc(address)
+
     def set_pc(self, address):  # type: (Addr) -> None
         """Set the program counter of the emulated program."""
         pc = self.raw.getPCRegister()
         self.raw.writeRegister(pc, resolve(address).getOffset())
+
+    @property
+    def sp_register(self):  # type: () -> str
+        """Get the stack pointer register name for the emulated architecture."""
+        return self.raw.getStackPointerRegister().getName()
+
+    @property
+    def sp(self):  # type: () -> int
+        """Get the current stack pointer register value."""
+        return self.read_register(self.sp_register)
+
+    @sp.setter
+    def sp(self, value):  # type: (Addr) -> None
+        """Set the current stack pointer register value.
+
+        :param value: new stack pointer value."""
+        self.set_sp(value)
+
+    def set_sp(self, value):  # type: (Addr) -> None
+        """Set the current stack pointer register value.
+
+        :param value: new stack pointer value."""
+        self.write_register(self.sp_register, resolve(value).getOffset())
 
     def __getitem__(self, reg):  # type: (Reg|int) -> int
         """Read the register of the emulated program.
@@ -3018,6 +3109,24 @@ class Emulator(GhidraWrapper):
         else:
             raise RuntimeError("Unsupported varnode type")
 
+    def __run_with_hooks(self):  # type: () -> bool
+        """Run the emulator, and transparently handle all hooks.
+
+        :return: true if emulator stopped at a (non-hook) breakpoint, or if
+          a hook asked emulator to stop (by returning False)."""
+
+        while not monitor.isCancelled():
+            is_breakpoint = self.raw.run(monitor)
+            if self.pc not in self._hooks:
+                return is_breakpoint
+
+            continue_execution = self._hooks[self.pc](self)
+            if not continue_execution:
+                # We return True to signal that no emulation error occured.
+                return True
+
+        return False
+
     def emulate(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
         """Emulate from start to end address.
 
@@ -3040,7 +3149,7 @@ class Emulator(GhidraWrapper):
             end = resolve(end)
             self.raw.setBreakpoint(end)
 
-        is_breakpoint = self.raw.run(monitor)
+        is_breakpoint = self.__run_with_hooks()
 
         for end in ends:
             end = resolve(end)

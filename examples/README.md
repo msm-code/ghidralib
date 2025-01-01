@@ -13,6 +13,8 @@ Scripts here are often rewritten Ghidra examples, or very small deobfuscation sc
 
 * [SwitchOverride](./SwitchOverride.py): Fixup a switch statement at the pointer location (in 40 lines of code, [original](https://github.com/NationalSecurityAgency/ghidra/blob/master/Ghidra/Features/Decompiler/ghidra_scripts/SwitchOverride.java) has 110).
 * [DumpHighPcode](./DumpHighPcode.py): Dump high-level Pcode of a function (in 4 lines of code, [original](https://github.com/evm-sec/high-pcode/blob/main/HighPCode.java) has 103).
+* [EmulatorHooks](./EmulatorHooks.py): An example of how to use the emulator to emulate a single function,
+  including a simple printf hook.
 
 ## Everyday use
 
