@@ -13,8 +13,8 @@ Later just `from ghidralib import *`.
 
 ## Usage
 
-Before you read the [documentation](https://msm-code.github.io/ghidralib/), you
-can check these few examples of a basic ghidralib usage:
+Check out the [documentation](https://msm-code.github.io/ghidralib/) or official [examples](./examples/).
+A short demonstration of a basic ghidralib usage first:
 
 1. Get all function instructions (similarly for basic blocks, low and high pcode, calls and xrefs):
 
