@@ -1,4 +1,4 @@
-from inspect import ismethod
+import sys
 from ghidralib import *
 
 # Run tests on 44573a7526d5053a28d4e3e70c6ad8adf8eec148d8fe81302140b6bb3df179c0
@@ -6,6 +6,13 @@ from ghidralib import *
 
 # TODO: Symbol.remove
 # TODO: disassemble_at
+
+
+def b(value):  # (str) -> bytes
+    """Python2/3 helper: convert string to bytes (py3) or noop (py2)"""
+    if sys.version_info[0] == 3:
+        return value.encode("latin1")
+    return value
 
 
 ###############################################################
@@ -185,7 +192,7 @@ def test_instruction():
     assert len(ins.pcode) > 0
     assert ins.high_pcode is not None
 
-    assert ins.to_bytes() == "\x83\xec\x18"
+    assert ins.to_bytes() == b("\x83\xec\x18")
     assert ins.length == 3
     assert len(ins) == 3
     assert ins.operand(0) == "ESP"
@@ -509,9 +516,9 @@ def test_emulator():
 
     emu["esi"] = 0
     assert emu["esi"] == 0
-    assert emu.read_bytes(0x403ECB, 5) != "\x90\x90\x90\x90\x90"
-    emu.write_bytes(0x403ECB, "\x90\x90\x90\x90\x90")
-    assert emu.read_bytes(0x403ECB, 5) == "\x90\x90\x90\x90\x90"
+    assert emu.read_bytes(0x403ECB, 5) != b("\x90\x90\x90\x90\x90")
+    emu.write_bytes(0x403ECB, b("\x90\x90\x90\x90\x90"))
+    assert emu.read_bytes(0x403ECB, 5) == b("\x90\x90\x90\x90\x90")
     emu.emulate(0x403ECB, 0x403ED0)
     # assert emu["esi"] == 0
     # Uhh, looks like Ghidra emulator doesn't support self-modifying code yet.
@@ -521,7 +528,7 @@ def test_emulator():
     emu.write_register("esi", 1)
     assert emu.read_register("esi") == 1
 
-    emu.write_bytes(0x400000, "\x01\x02\x03\x04\x05\x06\x07\x08")
+    emu.write_bytes(0x400000, b("\x01\x02\x03\x04\x05\x06\x07\x08"))
     assert emu.read_u8(0x400000) == 0x01
     assert emu.read_u16(0x400000) == 0x0201
     assert emu.read_u32(0x400000) == 0x04030201
@@ -536,7 +543,7 @@ def test_emulator():
     emu.write_u64(0x400000, 0x0807060504030201)
     assert emu.read_u64(0x400000) == 0x0807060504030201
 
-    assert emu.read_bytes(0x400000, 8) == "\x01\x02\x03\x04\x05\x06\x07\x08"
+    assert emu.read_bytes(0x400000, 8) == b("\x01\x02\x03\x04\x05\x06\x07\x08")
 
     # High-level function emulation API
     fnc = Function(0x004061EC)
@@ -594,16 +601,18 @@ def test_util():
     assert len(disassemble_at(0x0403ED0)) == 1
     assert len(disassemble_at(0x0403ED0, max_instr=2)) == 2
 
-    assert assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"]) == "\x01\xc0\x01\xc0"
-    assert assemble_to_bytes(0, "ADD EAX, EAX") == "\x01\xc0"
+    assert assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"]) == b(
+        "\x01\xc0\x01\xc0"
+    )
+    assert assemble_to_bytes(0, "ADD EAX, EAX") == b("\x01\xc0")
     # TODO: assemble_at
 
     assert from_bytes([0x01, 0x02]) == 0x0201
-    assert to_bytes(0x0201, 2) == "\x01\x02"
-    assert to_bytes(0x0201, 4) == "\x01\x02\x00\x00"
-    assert unhex("0102") == "\x01\x02"
-    assert enhex("\x01\x02") == "0102"
-    assert xor("\x01\x02", "\x03\x04") == "\x02\x06"
+    assert to_bytes(0x0201, 2) == b("\x01\x02")
+    assert to_bytes(0x0201, 4) == b("\x01\x02\x00\x00")
+    assert unhex("0102") == b("\x01\x02")
+    assert enhex(b("\x01\x02")) == "0102"
+    assert xor(b("\x01\x02"), b("\x03\x04")) == b("\x02\x06")
 
     assert get_string(0x40B968) == "ShellExecuteW"
     assert read_cstring(0x40B968) == "ShellExecuteW"
