@@ -354,7 +354,7 @@ class Graph(GenericT, GhidraWrapper):
         the ID will be used as the name.
         :returns: vtx parameter is returned"""
         vid = _get_unique_string(vtx)
-        name = name or vid
+        name = name or str(vtx)
         self.raw.addVertex(vid, name)
         self.data[vid] = vtx
         return vtx
@@ -390,7 +390,7 @@ class Graph(GenericT, GhidraWrapper):
         return self.vertex_count
 
     @property
-    def edges(self):  # type: () -> list[T]
+    def edges(self):  # type: () -> list[tuple[T, T]]
         """Get all edges in this graph.
 
         Warning: this constructs the list every time, so it's not a light operation.
@@ -400,7 +400,7 @@ class Graph(GenericT, GhidraWrapper):
             frm = self.raw.getEdgeSource(e)
             to = self.raw.getEdgeTarget(e)
             frmobj = self.data.get(frm, frm)
-            toobj = self.data.get(to, frm)
+            toobj = self.data.get(to, to)
             result.append((frmobj, toobj))
         return result
 
@@ -418,6 +418,19 @@ class Graph(GenericT, GhidraWrapper):
     def description(self):  # type: () -> str
         """Return the description of this graph."""
         return self.raw.getDescription()
+
+    def to_dot(self):  # type: () -> str
+        """Return a DOT representation of this graph."""
+        result = []
+        result.append("digraph {} {{".format(self.name))
+        for v in self.raw.vertexSet():
+            result.append('    "{}" [label="{}"];'.format(v.getId(), v.getName()))
+        for e in self.raw.edgeSet():
+            frm = self.raw.getEdgeSource(e)
+            to = self.raw.getEdgeTarget(e)
+            result.append('    "{}" -> "{}";'.format(frm.getId(), to.getId()))
+        result.append("}")
+        return "\n".join(result)
 
     def show(self):  # type: () -> None
         """Display this graph in the Ghidra GUI."""
