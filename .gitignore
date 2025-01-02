@@ -1,3 +1,4 @@
 *.class
 site/
 shell.nix
+__pycache__

@@ -53,27 +53,9 @@ from ghidra.app.util import SearchConstants
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
 from java.awt import Color
-from __main__ import (
-    toAddr,
-    createFunction,
-    getDataAt,
-    createLabel,
-    state,
-    createData,
-    clearListing,
-    getReferencesTo,
-    getInstructionAt,
-    getBytes,
-    currentLocation,
-    monitor,
-    removeSymbol,
-    getCurrentProgram,
-    disassemble,
-)
-from java.util import ArrayList
-from array import array
 
-__version__ = "0.1.0"
+import sys
+
 
 try:
     # For static type hints (won't work in Ghidra)
@@ -82,11 +64,105 @@ except ImportError:
     TYPE_CHECKING = False
 
 
+if sys.version_info.major == 2:
+    # Jython support
+    from __main__ import (
+        toAddr,
+        createFunction,
+        getDataAt,
+        createLabel,
+        getMonitor,
+        createData,
+        clearListing,
+        getReferencesTo,
+        getInstructionAt,
+        getBytes,
+        getState,
+        currentLocation,
+        getMonitor,
+        removeSymbol,
+        getCurrentProgram,
+        disassemble,
+    )
+
+    if not TYPE_CHECKING:
+        bytes = str
+
+    from array import array
+
+    def is_array(value):  # type: (object) -> bool
+        return isinstance(value, array)
+
+    def _bytes_as_list(value):  # type: (bytes) -> list[int]
+        return [ord(c) for c in value]  # type: ignore
+
+    def _asbytes(value):  # type: (str) -> bytes
+        return value  # type: ignore
+
+    def _unhex(s):  # type: (str) -> bytes
+        return s.replace(" ", "").replace("\n", "").decode("hex")  # type: ignore
+
+    def _enhex(s):  # type: (bytes) -> str
+        return s.encode("hex")  # type: ignore
+
+else:
+    # CPython support
+    from pyghidra.script import get_current_interpreter
+
+    interpreter = get_current_interpreter()
+    toAddr = interpreter.toAddr
+    createFunction = interpreter.createFunction
+    getDataAt = interpreter.getDataAt
+    createLabel = interpreter.createLabel
+    getState = interpreter.getState
+    createData = interpreter.createData
+    clearListing = interpreter.clearListing
+    getReferencesTo = interpreter.getReferencesTo
+    getInstructionAt = interpreter.getInstructionAt
+    getBytes = interpreter.getBytes
+    currentLocation = interpreter.currentLocation
+    getMonitor = interpreter.getMonitor
+    removeSymbol = interpreter.removeSymbol
+    getCurrentProgram = interpreter.getCurrentProgram
+    disassemble = interpreter.disassemble
+
+    long = int
+
+    class unicode:
+        def encode(self):  # type: () -> str
+            # A fake method, to keep type-checker relatively happy
+            raise NotImplementedError("This method should never be called")
+
+    from jpype import JArray
+
+    def is_array(value):  # type: (object) -> bool
+        return isinstance(value, JArray)
+
+    def _bytes_as_list(value):  # type: (bytes) -> list[int]
+        return value  # type: ignore
+
+    def _asbytes(value):  # type: (str) -> bytes
+        return value.encode("latin1")
+
+    def _unhex(s):  # type: (str) -> bytes
+        return bytes.fromhex(s)
+
+    def _enhex(s):  # type: (bytes) -> str
+        return s.hex()
+
+
+from java.util import ArrayList
+from java.math import BigInteger
+
+
+__version__ = "0.1.0"
+
+
 # Early Python2.x aliases
 if TYPE_CHECKING:
     # Python 2.x archaism.
     long = int
-    unicode = str
+    unicode = str  # type: ignore
 
 
 class JavaObject:
@@ -103,6 +179,18 @@ def _as_javaobject(raw):  # type: (Any) -> JavaObject
     This function exists mostly to make a type-checker happy"""
     assert hasattr(raw, "__class__")
     return raw
+
+
+def pyint(value):
+    """Convert a given int-like value to a Python integer.
+
+    This is a jpype helper: it converts Java BigIntegers to Python ints.
+
+    :param value: The value to convert, either a Python int or BigInteger.
+    :return: The converted value, always a python int."""
+    if isinstance(value, BigInteger):
+        return value.intValueExact()
+    return value
 
 
 class GhidraWrapper(object):
@@ -194,7 +282,7 @@ if TYPE_CHECKING:
 
 
 # For isinstance checks, so i can forget about this distinction once again
-Str = (str, unicode)
+Str = (str, bytes, unicode)
 
 
 # Use this color for highlight by default - it should work with any theme.
@@ -311,7 +399,7 @@ class Graph(GenericT, GhidraWrapper):
         """
         name = name or "Graph"
         description = description or "Graph"
-        graphtype = GraphType(name, description, [], [])
+        graphtype = GraphType(name, description, ArrayList([]), ArrayList([]))
         return Graph(AttributedGraph(name, graphtype, description))
 
     @staticmethod
@@ -425,9 +513,9 @@ class Graph(GenericT, GhidraWrapper):
         description = graphtype.getDescription()
         options = GraphDisplayOptions(graphtype)
 
-        broker = state.tool.getService(GraphDisplayBroker)
-        display = broker.getDefaultGraphDisplay(False, monitor)
-        display.setGraph(self.raw, options, description, False, monitor)
+        broker = getState().tool.getService(GraphDisplayBroker)
+        display = broker.getDefaultGraphDisplay(False, getMonitor())
+        display.setGraph(self.raw, options, description, False, getMonitor())
 
     def __resolve(self, vid):  # type: (str) -> T
         """Resolve a vertex ID to a vertex object.
@@ -714,7 +802,7 @@ class Varnode(GhidraWrapper):
 
     @property
     def offset(self):  # type: () -> int
-        return self.raw.getOffset()
+        return int(self.raw.getOffset())
 
     @property
     def size(self):  # type: () -> int
@@ -1089,7 +1177,7 @@ class HighFunction(GhidraWrapper):
         ingraph.setIndices()
         decompiler = DecompInterface()
         decompiler.openProgram(Program.current())
-        outgraph = decompiler.structureGraph(ingraph, 0, monitor)
+        outgraph = decompiler.structureGraph(ingraph, 0, getMonitor())
         return BlockGraph(outgraph)
 
     @property
@@ -1387,7 +1475,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get a list of references to this instruction."""
         return [Reference(raw) for raw in self.raw.getReferencesTo()]
 
-    def to_bytes(self):  # type: () -> str
+    def to_bytes(self):  # type: () -> bytes
         """Get the bytes of this instruction."""
         return to_bytestring(self.raw.getBytes())
 
@@ -1400,7 +1488,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get the length of this instruction in bytes."""
         return self.length
 
-    def __convert_operand(self, operand):  # type: (JavaObject) -> int|str|list
+    def __convert_operand(self, operand):  # type: (JavaObject) -> int|str|list[str|int]
         """Convert an operand to a scalar or address."""
         from ghidra.program.model.address import Address  # type: ignore
         from ghidra.program.model.scalar import Scalar  # type: ignore
@@ -1411,12 +1499,12 @@ class Instruction(GhidraWrapper, BodyTrait):
             return operand.getOffset()
         elif isinstance(operand, Scalar):
             return operand.getValue()
-        elif isinstance(operand, array):
-            operands = [self.__convert_operand(o) for o in operand]
+        elif is_array(operand):
+            operands = [self.__convert_operand(o) for o in operand]  # type: ignore
             if len(operands) == 1:
                 # Unwrap the operands if there is only one operand
                 return operands[0]
-            return operands
+            return operands  # type: ignore (we know there are no nested lists)
         else:
             raise RuntimeError("Don't know how to read operand {}".format(operand))
 
@@ -1535,7 +1623,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         targetlist = ArrayList(dest for dest in targets)
         jumpTab = JumpTable(toAddr(self.address), targetlist, True)
         jumpTab.writeOverride(func)
-        CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, monitor)
+        CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, getMonitor())
 
 
 class AddressRange(GhidraWrapper):
@@ -1654,7 +1742,7 @@ class AddressSet(GhidraWrapper):
         return AddressSet(self.raw.union(other.raw))
 
     def __get_highlighter(self):  # type: () -> Any
-        tool = state.getTool()
+        tool = getState().getTool()
         service = tool.getService(ColorizingService)
         if service is None:
             raise RuntimeError("Cannot highlight without the ColorizingService")
@@ -2117,7 +2205,7 @@ class SymbolicPropogator(GhidraWrapper):
         :param body: The body where constants should be propagated
         :param evaluator: The evaluator to use for the propagation"""
         addr = resolve(addr)
-        self.raw.flowConstants(addr, body.raw, evaluator, False, monitor)
+        self.raw.flowConstants(addr, body.raw, evaluator, False, getMonitor())
 
     def register_at(self, addr, register):  # type: (Addr, Reg) -> int|None
         """Get a known register value at the given address (or None)
@@ -2550,7 +2638,7 @@ class Function(GhidraWrapper, BodyTrait):
 
         :return: a SymbolicPropogator instance with this function context."""
         propagator = SymbolicPropogator.create()
-        evaluator = ConstantPropagationContextEvaluator(monitor)
+        evaluator = ConstantPropagationContextEvaluator(getMonitor())
         propagator.flow_constants(self.entrypoint, self.body, evaluator)
         return propagator
 
@@ -2751,15 +2839,17 @@ class DataType(GhidraWrapper):
         :param only_local: if True, return only local data types. Otherwise,
           will scan all data types in all data type managers."""
         datatypes = list(Program.current().getDataTypeManager().getAllDataTypes())
-        if only_local:
-            return datatypes
-        managers = (
-            state.getTool().getService(DataTypeManagerService).getDataTypeManagers()
-        )
-        for manager in managers:
-            for datatype in manager.getAllDataTypes():
-                datatypes.append(datatype)
-        return datatypes
+        if not only_local:
+            managers = (
+                getState()
+                .getTool()
+                .getService(DataTypeManagerService)
+                .getDataTypeManagers()
+            )
+            for manager in managers:
+                for datatype in manager.getAllDataTypes():
+                    datatypes.append(datatype)
+        return [DataType(raw) for raw in datatypes]
 
     @property
     def name(self):  # type: () -> str
@@ -2928,9 +3018,9 @@ class Emulator(GhidraWrapper):
             1337
 
         :param reg: the register to read from."""
-        return self.raw.readRegister(reg)
+        return pyint(self.raw.readRegister(reg))
 
-    def read_bytes(self, address, length):  # type: (Addr, int) -> str
+    def read_bytes(self, address, length):  # type: (Addr, int) -> bytes
         """Read `length` bytes at `address` from the emulated program.
 
             >>> emulator.write_bytes(0x1000, "1")
@@ -2940,7 +3030,7 @@ class Emulator(GhidraWrapper):
         :param address: the address to read from
         :param length: the length to read"""
         bytelist = self.raw.readMemory(resolve(address), length)
-        return "".join(chr(x % 256) for x in bytelist)
+        return _asbytes("".join(chr(x % 256) for x in bytelist))
 
     def read_u8(self, address):  # type: (Addr) -> int
         """Read a byte from the emulated program.
@@ -3064,7 +3154,7 @@ class Emulator(GhidraWrapper):
         :param value: the value to write"""
         self.raw.writeRegister(reg, value)
 
-    def write_bytes(self, address, value):  # type: (Addr, str) -> None
+    def write_bytes(self, address, value):  # type: (Addr, bytes) -> None
         """Write to the memory of the emulated program.
 
             >>> emulator.write_bytes(0x1000, "1")
@@ -3084,7 +3174,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to"""
         assert 0 <= value < 2**8, "value out of range"
-        self.write_bytes(address, chr(value))
+        self.write_bytes(address, to_bytes(value, 1))
 
     def write_u16(self, address, value):  # type: (Addr, int) -> None
         """Write a 16bit unsigned integer to the emulated program.
@@ -3157,8 +3247,8 @@ class Emulator(GhidraWrapper):
         :return: true if emulator stopped at a (non-hook) breakpoint, or if
           a hook asked emulator to stop (by returning False)."""
 
-        while not monitor.isCancelled():
-            is_breakpoint = self.raw.run(monitor)
+        while not getMonitor().isCancelled():
+            is_breakpoint = self.raw.run(getMonitor())
             if self.pc not in self._hooks:
                 return is_breakpoint
 
@@ -3222,7 +3312,7 @@ class Emulator(GhidraWrapper):
         emu.setHalt(False)
 
         while not emu.getHalt() and condition(self):
-            emu.executeInstruction(True, monitor)
+            emu.executeInstruction(True, getMonitor())
 
         if self.raw.getLastError() is not None:
             err = self.raw.getLastError()
@@ -3248,7 +3338,7 @@ class Emulator(GhidraWrapper):
         current = resolve(start)
         end = resolve(end)
         while current != end and maxsteps > 0:
-            success = self.raw.step(monitor)
+            success = self.raw.step(getMonitor())
             if not success:
                 err = self.raw.getLastError()
                 raise RuntimeError("Error at {}: {}".format(current, err))
@@ -3374,7 +3464,7 @@ class Program(GhidraWrapper):
         return getCurrentProgram()
 
 
-def to_bytestring(val):  # type: (str | list[int]) -> str
+def to_bytestring(val):  # type: (bytes | list[int]) -> bytes
     """Ensure the passed value is a bytestring.
 
         >>> to_bytestring([97, 98, 99])
@@ -3384,13 +3474,13 @@ def to_bytestring(val):  # type: (str | list[int]) -> str
 
     This is used to convert java byte arrays to a proper python bytestring."""
     if not isinstance(val, Str):
-        return "".join(chr(i % 256) for i in val)
+        return _asbytes("".join(chr(i % 256) for i in val))
     return val
 
 
 def disassemble_bytes(
     data, addr=0, max_instr=None
-):  # type: (str, Addr, int|None) -> list[Instruction]
+):  # type: (bytes, Addr, int|None) -> list[Instruction]
     """Disassemble the given bytes and return a list of Instructions.
 
     This function will return early if an exception during disassembly occurs.
@@ -3501,7 +3591,7 @@ def assemble_at(
                 disassemble(toAddr(xref.to_address))
 
 
-def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> str
+def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> bytes
     """Assemble the given instructions and return them as an array of bytes.
 
     Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
@@ -3522,7 +3612,7 @@ def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> 
     asm = Assemblers.getAssembler(Program.current())
     if isinstance(instructions, Str):
         return to_bytestring(asm.assembleLine(addr_obj, instructions))
-    result = ""
+    result = _asbytes("")
     for instr in instructions:
         result += to_bytestring(asm.assembleLine(addr_obj.add(len(result)), instr))
     return result
@@ -3628,7 +3718,7 @@ def read_u64(address):  # type: (Addr) -> int
     return from_bytes(read_bytes(address, 8))
 
 
-def read_bytes(address, length):  # type: (Addr, int) -> str
+def read_bytes(address, length):  # type: (Addr, int) -> bytes
     """Read a byte stream from program at address.
 
         >>> read_bytes(0x1000, 4)
@@ -3637,10 +3727,10 @@ def read_bytes(address, length):  # type: (Addr, int) -> str
     :param address: address from which to read.
     :param length: number of bytes to read."""
     address = resolve(address)
-    return "".join(chr(x % 256) for x in getBytes(address, length))
+    return _asbytes("".join(chr(x % 256) for x in getBytes(address, length)))
 
 
-def from_bytes(b):  # type: (str | list[int]) -> int
+def from_bytes(b):  # type: (bytes | list[int]) -> int
     """Decode a byte stream as a little-endian integer.
 
         >>> from_bytes([0x01, 0x02])
@@ -3648,10 +3738,11 @@ def from_bytes(b):  # type: (str | list[int]) -> int
 
     :param b: byte stream to decode."""
     b = to_bytestring(b)
-    return sum(ord(v) << (i * 8) for i, v in enumerate(b))
+    bl = _bytes_as_list(b)
+    return sum(v << (i * 8) for i, v in enumerate(bl))
 
 
-def to_bytes(value, length):  # type: (int, int) -> str
+def to_bytes(value, length):  # type: (int, int) -> bytes
     """Encode an integer as a little-endian byte stream.
 
         >>> to_bytes(0x0102, 2)
@@ -3663,20 +3754,20 @@ def to_bytes(value, length):  # type: (int, int) -> str
     for i in range(length):
         out += chr(value & 0xFF)
         value >>= 8
-    return out
+    return _asbytes(out)
 
 
-def unhex(s):  # type: (str) -> str
+def unhex(s):  # type: (str) -> bytes
     """Decode a hex string.
 
         >>> unhex("01 02")
         '0102'
 
     :param s: hex string to decode."""
-    return s.replace(" ", "").replace("\n", "").decode("hex")  # type: ignore <- py2
+    return _unhex(s)
 
 
-def enhex(s):  # type: (str | list[int]) -> str
+def enhex(s):  # type: (bytes | list[int]) -> str
     """Convert raw bytes to a hex string.
 
         >>> enhex([0x01, 0x02])
@@ -3684,11 +3775,11 @@ def enhex(s):  # type: (str | list[int]) -> str
 
     :param s: raw bytes to encode."""
     if not isinstance(s, Str):
-        s = "".join(chr(c) for c in s)
-    return s.encode("hex")  # type: ignore <- py2
+        return _enhex(_asbytes("".join(chr(c) for c in s)))
+    return _enhex(s)
 
 
-def xor(a, b):  # type: (str, str) -> str
+def xor(a, b):  # type: (bytes, bytes) -> bytes
     """XOR two bytestrings together.
 
     If two bytestrings are not the same length, the result will be
@@ -3699,7 +3790,9 @@ def xor(a, b):  # type: (str, str) -> str
 
     :param a: the first bytestring.
     :param b: the second bytestring."""
-    return "".join(chr(ord(x) ^ ord(y)) for x, y in zip(a, b))
+    al = _bytes_as_list(a)
+    bl = _bytes_as_list(b)
+    return _asbytes("".join(chr(x ^ y) for x, y in zip(al, bl)))
 
 
 def _get_unique_string(obj):  # type: (object) -> str
@@ -3713,7 +3806,10 @@ def _get_unique_string(obj):  # type: (object) -> str
     Warning: This function is an implementation detail, and may be changed often.
 
     :param obj: the object to convert."""
-    if isinstance(obj, Str):
+    if isinstance(obj, unicode):
+        # This can only happen for Jython - in this case, convert unicode to str.
+        return obj.encode()
+    elif isinstance(obj, str):
         return obj
     elif isinstance(obj, (int, long)):
         return str(obj)
@@ -3728,7 +3824,7 @@ def _get_unique_string(obj):  # type: (object) -> str
         raise TypeError("Cannot convert object {} to string".format(obj))
 
 
-def _pattern_to_bytes(pattern):  # type: (str) -> str
+def _pattern_to_bytes(pattern):  # type: (str) -> bytes
     """Convert a pattern string to a byte string.
 
         >>> _pattern_to_bytes("01 02 ?? 04")
@@ -3739,7 +3835,7 @@ def _pattern_to_bytes(pattern):  # type: (str) -> str
     return unhex(pattern)
 
 
-def _pattern_to_mask(pattern):  # type: (str) -> str
+def _pattern_to_mask(pattern):  # type: (str) -> bytes
     """Convert a pattern string to a mask string.
 
         >>> _pattern_to_mask("01 02 ?? 04")
@@ -3762,7 +3858,9 @@ def findone_pattern(byte_pattern, start=0):  # type: (str, Addr) -> int|None
     start = resolve(start)
     bytes = _pattern_to_bytes(byte_pattern)
     mask = _pattern_to_mask(byte_pattern)
-    addr = Program.current().getMemory().findBytes(start, bytes, mask, True, monitor)
+    addr = (
+        Program.current().getMemory().findBytes(start, bytes, mask, True, getMonitor())
+    )
     if not addr:
         return None
     return addr.getOffset()
