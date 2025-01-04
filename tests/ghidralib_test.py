@@ -1,3 +1,5 @@
+# @runtime: PyGhidra
+
 import sys
 from ghidralib import *
 
@@ -92,6 +94,8 @@ def test_high_symbol():
 def test_register():
     assert Register.get("eax") is not None
     assert Register("eax").name == "EAX"
+    assert Register("eax").size == 4
+    assert Register("eax").varnode is not None
 
 
 ###############################################################
@@ -192,16 +196,46 @@ def test_instruction():
     assert len(ins.pcode) > 0
     assert ins.high_pcode is not None
 
-    assert ins.to_bytes() == b("\x83\xec\x18")
+    assert ins.bytes == b("\x83\xec\x18")
     assert ins.length == 3
     assert len(ins) == 3
-    assert ins.operand(0) == "ESP"
-    assert ins.operand(1) == 0x18
 
-    assert ins.operands == ["ESP", 0x18]
+    assert ins.operand(0).is_register
+    assert ins.operand(0).register == "ESP"
+    assert ins.operands[0].is_register
+    assert ins.operands[0].register == "ESP"
+    assert ins.operand(1).is_scalar
+    assert ins.operand(1).scalar == 0x18
+    assert ins.operands[1].is_scalar
+    assert ins.operands[1].scalar == 0x18
+    assert ins.operand_values == ["ESP", 0x18]
+
+    ins = assemble("JMP 0")[0]
+    assert not ins.has_fallthrough
+
+    ins.set_fallthrough_override(0x1000)
+    assert ins.has_fallthrough
+
+    ins.clear_fallthrough_override()
+    assert not ins.has_fallthrough
 
     mov = Instruction(0x40683E)
     assert len(mov.xrefs_from) > 0
+    assert len(mov.xrefs_to) == 0
+    assert mov.has_fallthrough
+
+    ins = Instruction(0x403993)
+    assert ins.mnemonic == "MOVZX"
+    assert ins.operand(1).is_list
+    assert ins.operand(1).list == ["ESI", 2]
+    assert len(ins.output_varnodes) == 3
+    assert len(ins.input_varnodes) == 5
+
+    Instruction.create(0x403993)  # no-op in this case
+
+    ins = Instruction(0x40399F)
+    assert ins.flows == [0x4039A6]
+    assert ins.all_flows == [0x4039A6, 0x4039A1]
 
     # TODO fallthrough_override and jumptable
 
@@ -229,8 +263,12 @@ def test_basic_block():
     assert block.address == 0x004043D9
     assert block.start_address == 0x004043D9
     assert block.end_address == 0x004043F8
+    assert block.length == 32
+    assert block.bytes == unhex(
+        "558bec81ec840000005356578bf86a145bc745fcdcffffff81ff00001000730a"
+    )
 
-    assert len(block.instructions) > 0
+    assert len(block.instructions) == 12
     assert len(block.pcode) > 0
     assert len(block.destinations) > 0
     assert len(block.sources) > 0
@@ -513,9 +551,59 @@ def test_emulator():
     assert emu["esi"] == 0
     emu.emulate(0x403ECB, 0x403ED0)
     assert emu["esi"] == 0xFFFF
+    assert emu.pc == 0x403ED0
+
+    emu = Emulator()
+    assert emu["esi"] == 0
+    emu.emulate_fast(0x403ECB, 0x403ED0)
+    assert emu["esi"] == 0xFFFF
+    assert emu.pc == 0x403ED0
+
+    emu.single_step()
+    assert emu.pc == 0x405F96
+
+    emu = Emulator()
+    emu.emulate(0x403ECB, maxsteps=2)
+    assert emu.pc == 0x405f96
+
+    emu = Emulator()
+    emu.emulate(0x403ECB, ends=[0x403ED0, 0x1234])
+    assert emu.pc == 0x403ED0
+
+    emu = Emulator()
+    emu.emulate(0x403ECB, stop_when=lambda pc: pc == 0x403ED0)
+    assert emu.pc == 0x403ED0
+
+    was_called = [False]
+
+    def ensure_called(pc):
+        was_called[0] = True
+
+    emu = Emulator()
+    emu.emulate(0x403ECB, 0x403ED0, callback=ensure_called)
+    assert was_called[0]
+
+    last_pc = [0]
+
+    def make_returner(value):
+        def wrapped(pc):
+            return value
+
+        return wrapped
+
+    emu.emulate(0x403EC1, 0x403ED0, callback=make_returner("continue"))
+    assert emu.pc == 0x403ED0
+
+    emu.emulate(0x403EC1, 0x403ED0, callback=make_returner("break"))
+    assert emu.pc == 0x403EC1
+
+    emu.emulate(0x403EC1, 0x403ED0, callback=make_returner("continue_then_break"))
+    assert emu.pc == 0x403EC2
 
     emu["esi"] = 0
     assert emu["esi"] == 0
+
+    emu = Emulator()
     assert emu.read_bytes(0x403ECB, 5) != b("\x90\x90\x90\x90\x90")
     emu.write_bytes(0x403ECB, b("\x90\x90\x90\x90\x90"))
     assert emu.read_bytes(0x403ECB, 5) == b("\x90\x90\x90\x90\x90")
@@ -554,7 +642,7 @@ def test_emulator():
     fnc = Function(0x004061EC)
     emu = Emulator()
     emu.write_varnode(fnc.parameters[0].varnode, -0x80000000)
-    emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+    emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
     assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
 
     mock_executed = [False]
@@ -570,6 +658,25 @@ def test_emulator():
     emu.add_hook("lstrcpynW", nullsub)
     emu.emulate(fun.entrypoint, fun.exitpoints)
     assert mock_executed[0]
+
+
+###############################################################
+# Test Memory Block
+###############################################################
+
+
+def test_memory_block():
+    mbs = MemoryBlock.all()
+    assert len(mbs) == 8
+
+    assert len(Program.memory_blocks()) == 8
+
+    mb = [m for m in mbs if m.name == ".text"][0]
+    assert mb.length == 29696
+    assert mb.size == 29696
+    assert mb.start == 0x401000
+    assert mb.end == 0x4083FF
+    assert mb.bytes is not None
 
 
 ###############################################################
@@ -601,13 +708,11 @@ def test_util():
     assert len(disassemble_at(0x0403ED0)) == 1
     assert len(disassemble_at(0x0403ED0, max_instr=2)) == 2
 
-    assert assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"]) == b(
-        "\x01\xc0\x01\xc0"
-    )
-    assert assemble_to_bytes(0, "ADD EAX, EAX") == b("\x01\xc0")
+    assert assemble_to_bytes(["ADD EAX, EAX", "ADD EAX, EAX"]) == b("\x01\xc0\x01\xc0")
+    assert assemble_to_bytes("ADD EAX, EAX") == b("\x01\xc0")
     # TODO: assemble_at
 
-    assert from_bytes([0x01, 0x02]) == 0x0201
+    assert from_bytes(b('ab')) == 25185
     assert to_bytes(0x0201, 2) == b("\x01\x02")
     assert to_bytes(0x0201, 4) == b("\x01\x02\x00\x00")
     assert unhex("0102") == b("\x01\x02")
@@ -617,8 +722,12 @@ def test_util():
     assert get_string(0x40B968) == "ShellExecuteW"
     assert read_cstring(0x40B968) == "ShellExecuteW"
 
+    assert assemble("JMP 0")[0].mnemonic == "JMP"
+
 
 def run():
+    print("Running with {}".format(sys.version))
+
     for f in globals():
         if f.startswith("test_"):
             print("Running {}...".format(f))

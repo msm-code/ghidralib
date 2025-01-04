@@ -53,19 +53,23 @@ from ghidra.app.util import SearchConstants
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
 from java.awt import Color
-
+from java.util import ArrayList
+from java.math import BigInteger
 import sys
 
 
+__version__ = "0.1.0"
+
+
 try:
-    # For static type hints (won't work in Ghidra)
+    # Import types for static type hints (and catch import error in Jython)
     from typing import Any, Callable, TYPE_CHECKING, Iterator, TypeVar, Generic
 except ImportError:
     TYPE_CHECKING = False
 
 
 if sys.version_info.major == 2:
-    # Jython support
+    # Jython support: this section is Jython specific
     from __main__ import (
         toAddr,
         createFunction,
@@ -78,84 +82,107 @@ if sys.version_info.major == 2:
         getInstructionAt,
         getBytes,
         getState,
-        currentLocation,
         getMonitor,
         removeSymbol,
         getCurrentProgram,
         disassemble,
+        analyzeChanges,
+        setBytes,
     )
 
+    # Python2 specific type definitions
+    # The goal is to support both languages with a single codebase
+
     if not TYPE_CHECKING:
-        bytes = str
+        bytes = str  # there is no "bytes" in python3.
 
     from array import array
 
-    def is_array(value):  # type: (object) -> bool
+    def _is_array(value):  # type: (object) -> bool
+        """Return True if the given value is a Java array"""
         return isinstance(value, array)
 
     def _bytes_as_list(value):  # type: (bytes) -> list[int]
+        """Convert the given string to a list of bytes."""
         return [ord(c) for c in value]  # type: ignore
 
+    def _bytes_from_bytelist(bytelist):  # type: (object) -> bytes
+        """Convert the given Java array of bytes to python bytes"""
+        return "".join(chr(x % 256) for x in bytelist)  # type: ignore
+
     def _asbytes(value):  # type: (str) -> bytes
+        """Convert the given string to bytes. No-op in py2"""
         return value  # type: ignore
 
     def _unhex(s):  # type: (str) -> bytes
+        """Decode hexadecimal string to bytes. Internal helper."""
         return s.replace(" ", "").replace("\n", "").decode("hex")  # type: ignore
 
     def _enhex(s):  # type: (bytes) -> str
+        """Encode bytes to hexadecimal string. Internal helper."""
         return s.encode("hex")  # type: ignore
 
 else:
-    # CPython support
+    # PyGhidra support: this section is PyGhidra specific
     from pyghidra.script import get_current_interpreter
 
     interpreter = get_current_interpreter()
-    toAddr = interpreter.toAddr
-    createFunction = interpreter.createFunction
-    getDataAt = interpreter.getDataAt
-    createLabel = interpreter.createLabel
-    getState = interpreter.getState
-    createData = interpreter.createData
-    clearListing = interpreter.clearListing
-    getReferencesTo = interpreter.getReferencesTo
-    getInstructionAt = interpreter.getInstructionAt
-    getBytes = interpreter.getBytes
-    currentLocation = interpreter.currentLocation
-    getMonitor = interpreter.getMonitor
-    removeSymbol = interpreter.removeSymbol
-    getCurrentProgram = interpreter.getCurrentProgram
-    disassemble = interpreter.disassemble
+    toAddr = get_current_interpreter().toAddr
+    createFunction = get_current_interpreter().createFunction
+    getDataAt = get_current_interpreter().getDataAt
+    createLabel = get_current_interpreter().createLabel
+    getState = get_current_interpreter().getState
+    createData = get_current_interpreter().createData
+    clearListing = get_current_interpreter().clearListing
+    getReferencesTo = get_current_interpreter().getReferencesTo
+    getInstructionAt = get_current_interpreter().getInstructionAt
+    getBytes = get_current_interpreter().getBytes
+    getMonitor = get_current_interpreter().getMonitor
+    removeSymbol = get_current_interpreter().removeSymbol
+    getCurrentProgram = get_current_interpreter().getCurrentProgram
+    disassemble = get_current_interpreter().disassemble
+    analyzeChanges = get_current_interpreter().analyzeChanges
+    setBytes = get_current_interpreter().setBytes
 
-    long = int
+    # Python3 specific type definitions
+    # The goal is to support both languages with a single codebase
+
+    long = int  # There is no "long" in Python3
 
     class unicode:
+        """A fake stub class, to keep type-checker relatively happy"""
+
         def encode(self):  # type: () -> str
-            # A fake method, to keep type-checker relatively happy
+            """A fake method, to keep type-checker relatively happy"""
             raise NotImplementedError("This method should never be called")
 
     from jpype import JArray
 
-    def is_array(value):  # type: (object) -> bool
+    def _is_array(value):  # type: (object) -> bool
+        """Return True if the given value is a Java array"""
         return isinstance(value, JArray)
 
     def _bytes_as_list(value):  # type: (bytes) -> list[int]
+        """Convert the given string to a list of bytes (no-op in py3)"""
         return value  # type: ignore
 
+    def _bytes_from_bytelist(bytelist):  # type: (object) -> bytes
+        """Convert the given Java array of bytes to python bytes"""
+        return bytes(bytelist)  # type: ignore
+
     def _asbytes(value):  # type: (str) -> bytes
+        """Convert the given string to bytes.
+
+        Ugly hack in python3 - This converts chr(N) to byte N for every N."""
         return value.encode("latin1")
 
     def _unhex(s):  # type: (str) -> bytes
+        """Decode hexadecimal string to bytes. Internal helper."""
         return bytes.fromhex(s)
 
     def _enhex(s):  # type: (bytes) -> str
+        """Encode bytes to hexadecimal string. Internal helper."""
         return s.hex()
-
-
-from java.util import ArrayList
-from java.math import BigInteger
-
-
-__version__ = "0.1.0"
 
 
 # Early Python2.x aliases
@@ -173,15 +200,7 @@ class JavaObject:
         pass
 
 
-def _as_javaobject(raw):  # type: (Any) -> JavaObject
-    """Ensure the object is actually a Java object, and return it.
-
-    This function exists mostly to make a type-checker happy"""
-    assert hasattr(raw, "__class__")
-    return raw
-
-
-def pyint(value):
+def _python_int(value):
     """Convert a given int-like value to a Python integer.
 
     This is a jpype helper: it converts Java BigIntegers to Python ints.
@@ -189,8 +208,19 @@ def pyint(value):
     :param value: The value to convert, either a Python int or BigInteger.
     :return: The converted value, always a python int."""
     if isinstance(value, BigInteger):
-        return value.intValueExact()
+        return int(value.toString())  # wtf
     return value
+
+
+def _python_str(string):  # type: (str|unicode) -> str
+    """Convert a given string-like value to a Python `str`.
+
+    In particular, this will convert unicode objects to normal strings.
+    This method only matters for Jython (Python 2) compatibility"""
+    if isinstance(string, unicode):
+        # This can only happen for
+        return string.encode()
+    return string
 
 
 class GhidraWrapper(object):
@@ -211,6 +241,20 @@ class GhidraWrapper(object):
     Similarly, equality is based on the underlying Java object."""
 
     def __init__(self, raw):  # type: (JavaObject|int|str|GhidraWrapper) -> None
+        """Initialize the wrapper.
+
+        This function will try to resolve the given object to a Ghidra object.
+        The algorithm is as follows:
+
+        * If "raw" is a primitive type (int, long, str, unicode, Address),
+          try to resolve it with a static "get" method of the subclass.
+        * If "raw" is a GhidraWrapper, unwrap it (so GhidraWrapper(GhidraWrapper(x))
+          is always the same as GhidraWrapper(x).
+        * If "raw" is None at this point, raise an exception.
+        * If the subclass has attribute UNDERLYING_CLASS, assert that the wrapped
+          type is of the expected type.
+        * Save the final "raw" value."""
+
         if isinstance(raw, (int, long, str, unicode, GenericAddress)):
             # Someone passed a primitive type to us.
             # If possible, try to resolve it with a "get" method.
@@ -240,22 +284,40 @@ class GhidraWrapper(object):
                     )
                 )
 
-        self.raw = _as_javaobject(raw)  # type: JavaObject
+        def _java_cast(raw):  # type: (Any) -> JavaObject
+            """This function exists only to make type-checker happy"""
+            return raw
+
+        self.raw = _java_cast(raw)
 
     def __str__(self):  # type: () -> str
+        """Return a string representation of this object.
+
+        This just forwards the call to the underlying object."""
         return self.raw.__str__()
 
     def __repr__(self):  # type: () -> str
+        """Return a string representation of this object.
+
+        This just forwards the call to the underlying object."""
         return self.raw.__repr__()
 
     def __tojava__(self, klass):
-        """Make it possible to pass this object to Java methods"""
+        """Make it possible to pass this object to Java methods.
+
+        This only works in Jython, I didn't find a way to do this in JPype yet."""
         return self.raw
 
     def __hash__(self):  # type: () -> int
+        """Return the hash of this object.
+
+        This just forwards the call to the underlying object."""
         return self.raw.hashCode()
 
     def __eq__(self, other):  # type: (object) -> bool
+        """Check if this object is equal to another.
+
+        This just forwards the call to the underlying object."""
         if isinstance(other, GhidraWrapper):
             return self.raw.equals(other.raw)
         return self.raw.equals(other)
@@ -317,7 +379,8 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
     if isinstance(addr, GenericAddress):
         return addr
     if isinstance(addr, (int, long)):
-        return toAddr(addr)
+        # Why convert to string? Java cannot handle large (unsigned) integers :/
+        return toAddr("{:x}".format(addr))
     if isinstance(addr, str):
         return toAddr(Symbol(addr).address)
     raise TypeError("Address must be a ghidra Address, int, or str")
@@ -360,6 +423,7 @@ def collect_iterator(iterator):  # type: (JavaObject) -> list
 
 
 if TYPE_CHECKING:
+    # Hacky workaround to have a optional generic type variable using comment syntax.
     T = TypeVar("T")
     GenericT = Generic[T]
 else:
@@ -791,9 +855,27 @@ class Register(GhidraWrapper):
         return Register(raw_or_name)
 
     @property
-    def name(self):
+    def name(self):  # type: () -> str
         """Return the name of this register"""
         return self.raw.getName()
+
+    @property
+    def size(self):  # type: () -> int
+        """Return the size of this register in bytes
+        
+        This will tell the total number of bytes this register contains -
+        because register values don't have to be byte-aligned"""
+        return self.raw.getNumBytes()
+
+    @property
+    def varnode(self):  # type: () -> Varnode
+        """Return the varnode associated with this register
+
+        Warning: this doesn't support registers that are not byte-aligned
+        (for example, flag registers). It will round the address down to byte.
+        """
+        raw = GhVarnode(self.raw.getAddress(), self.raw.getNumBytes())
+        return Varnode(raw)
 
 
 class Varnode(GhidraWrapper):
@@ -801,17 +883,17 @@ class Varnode(GhidraWrapper):
     def has_value(self):  # type: () -> bool
         """Return true if this varnode can be converted to a integer value.
 
-        In particuler, this will return true for Address and Constant varnodes"""
-        return self.is_address or self.is_constant
+        In particular, this will return true for Address and Constant varnodes"""
+        return self.value is not None
 
     @property
-    def value(self):  # type: () -> int
-        """Get the value of this varnode.
-        Will raise RuntimeError if varnode doesn't have a constant value.
-        Use has_value to check for this before getting the value."""
-        if not self.has_value:
-            raise RuntimeError("Varnode can't be converted to value")
-        return self.raw.getOffset()
+    def value(self):  # type: () -> int|None
+        """Get the value of this varnode. Traverse defining pcodeops if necessary."""
+        if self.is_address or self.is_constant:
+            return self.offset
+        if self.defining_pcodeop is None:
+            return None
+        return self.defining_pcodeop.result
 
     @property
     def offset(self):  # type: () -> int
@@ -900,8 +982,9 @@ class Varnode(GhidraWrapper):
 
         This is useful for simple analyses when programmer already knows what
         type of value is expected at the given position."""
-        if self.has_value:
-            return self.value
+        value = self.value
+        if value is not None:
+            return value
         elif self.is_register:
             if self.is_named_register:
                 return self.as_register
@@ -935,9 +1018,12 @@ class Varnode(GhidraWrapper):
         return self.raw.isFree()
 
     @property
-    def defining_pcodeop(self):  # type: () -> PcodeOp
+    def defining_pcodeop(self):  # type: () -> PcodeOp|None
         """Return a PcodeOp that defined this varnode"""
-        return PcodeOp(self.raw.getDef())
+        raw = self.raw.getDef()
+        if raw is None:
+            return None
+        return PcodeOp(raw)
 
     @property
     def descendants(self):  # type: () -> list[PcodeOp]
@@ -945,6 +1031,10 @@ class Varnode(GhidraWrapper):
         if self.raw.getDescendants() is None:
             return []
         return [PcodeOp(x) for x in self.raw.getDescendants()]
+
+    def intersects(self, other):  # type: (Varnode) -> list[PcodeOp]
+        """Return true if this varnode intersects other"""
+        return self.raw.intersects(other.raw)
 
 
 class PcodeOp(GhidraWrapper):
@@ -1076,6 +1166,19 @@ class PcodeOp(GhidraWrapper):
             return None
         return Varnode(self.raw.getOutput())
 
+    @property
+    def result(self):  # type: () -> int|None
+        """Try to evaluate the pcode operation to a constant value.
+
+        Right now this is very poor and doesn't try to implement most of the opcodes.
+        Mostly because I suspect I'm reinventing the wheel, and there is code to do
+        this already in Ghidra.
+
+        :return: Result of this operation, or None if can't be evaluated as const."""
+        if self.opcode == PcodeOp.COPY:
+            return self.inputs[0].value
+        return None
+
 
 def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
     """Create a BlockGraph or PcodeBlock, depending on arg type
@@ -1119,7 +1222,7 @@ class BlockGraph(PcodeBlock):
 
 class HighFunction(GhidraWrapper):
     @staticmethod
-    def get(address):  # type: (JavaObject|Addr) -> HighFunction|None
+    def get(address):  # type: (JavaObject|str|Addr) -> HighFunction|None
         """Get a HighFunction at a given address, or None if there is none."""
         if isinstance(address, GhHighFunction):
             return HighFunction(address)
@@ -1261,11 +1364,11 @@ def _reftype_placeholder():  # type: () -> RefType
 
 class RefType(GhidraWrapper):
     @property
-    def has_fall(self):  # type: () -> bool
+    def has_fallthrough(self):  # type: () -> bool
         return self.raw.hasFallthrough()
 
-    @has_fall.setter
-    def has_fall(self, value):  # type: (bool) -> None
+    @has_fallthrough.setter
+    def has_fallthrough(self, value):  # type: (bool) -> None
         self.raw.setHasFall(value)
 
     @property
@@ -1414,7 +1517,7 @@ class FlowType(GhidraWrapper):
     @property
     def has_fallthrough(self):  # type: () -> bool
         """Return True if this flow has a fallthrough."""
-        return self.raw.hasFallThrough()
+        return self.raw.hasFallthrough()
 
     @property
     def is_override(self):  # type: () -> bool
@@ -1422,11 +1525,59 @@ class FlowType(GhidraWrapper):
         return self.raw.isOverride()
 
 
+class Operand:
+    """Operand helper for instruction, may be a register, const or a list"""
+
+    def __init__(self, operand):  # type: (str|int|list[int|str]) -> None
+        self.raw = operand
+
+    @property
+    def is_register(self):  # type: () -> bool
+        """Return True if this operand is a register."""
+        return isinstance(self.raw, Str)
+
+    @property
+    def is_scalar(self):  # type: () -> bool
+        """Return True if this operand is a scalar."""
+        return isinstance(self.raw, (int, long))
+
+    @property
+    def is_list(self):  # type: () -> bool
+        """Return True if this operand is a list."""
+        return isinstance(self.raw, list)
+
+    @property
+    def register(self):  # type: () -> str
+        """Gets this operand value as a register name"""
+        if not isinstance(self.raw, (str)):
+            raise RuntimeError("Operand {} is not a register".format(self.raw))
+        return self.raw
+
+    @property
+    def scalar(self):  # type: () -> int
+        """Gets this operand value as a scalar"""
+        if not isinstance(self.raw, (int, long)):
+            raise RuntimeError("Operand {} is not a scalar".format(self.raw))
+        return self.raw
+
+    @property
+    def list(self):  # type: () -> list
+        """Gets this operand value as a list"""
+        if not isinstance(self.raw, list):
+            raise RuntimeError("Operand {} is not a list".format(self.raw))
+        return self.raw
+
+    @property
+    def value(self):  # type: () -> str|int|list[int|str]
+        """Return internal representation of this operand - string, int or a list"""
+        return self.raw
+
+
 class Instruction(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Instruction object"""
 
     @staticmethod
-    def get(address):  # type: (Addr) -> Instruction|None
+    def get(address):  # type: (JavaObject|str|Addr) -> Instruction|None
         """Get an instruction at the address, or None if not found.
 
         Note: This will return None if the instruction is not defined in Ghidra
@@ -1449,6 +1600,22 @@ class Instruction(GhidraWrapper, BodyTrait):
         raw_instructions = Program.current().getListing().getInstructions(True)
         return [Instruction(raw) for raw in raw_instructions]
 
+    @staticmethod
+    def create(address):  # type: (Addr) -> Instruction
+        """Create an instruction at the given address.
+
+        Note: this will force ghidra to disassemble at the given address,
+        and return the created instruction. If you want to actually change the
+        instruction at the given address, use `assemble_at` instead.
+
+        If you want to just create an instruction object, use `assemble` method.
+
+        :param address: The address where instruction should be created.
+        """
+        addr = resolve(address)
+        disassemble(addr)
+        return Instruction(addr)
+
     @property
     def mnemonic(self):  # type: () -> str
         """Get the mnemonic of this instruction."""
@@ -1467,9 +1634,35 @@ class Instruction(GhidraWrapper, BodyTrait):
     prev = previous
 
     @property
+    def flows(self):  # type: () -> list[int]
+        """Get a set of possible flows (next executed addresses).
+
+        Note: this DOES NOT INCLUDE a fallthrough. A strange design decision IMO,
+        but I'm being faithful to Ghidra API."""
+        return [addr.getOffset() for addr in self.raw.getFlows()]
+
+    @property
+    def all_flows(self):  # type: () -> list[int]
+        """Get a set of possible flows (next executed addresses).
+
+        Note: this INCLUDES fallthrough."""
+        fallthrough = self.fallthrough
+        return self.flows + ([fallthrough] if fallthrough else [])
+
+    @property
     def pcode(self):  # type: () -> list[PcodeOp]
         """Get a list of Pcode operations that this instruction was parsed to"""
         return [PcodeOp(raw) for raw in self.raw.getPcode()]
+
+    @property
+    def output_varnodes(self):  # type: () -> list[Varnode]
+        """Get a list of output (LOW) varnodes for this instruction."""
+        return [op.output for op in self.pcode if op.output]
+
+    @property
+    def input_varnodes(self):  # type: () -> list[Varnode]
+        """Get a list of output (LOW) varnodes for this instruction."""
+        return [inp for op in self.pcode if op.output for inp in op.inputs]
 
     @property
     def high_pcode(self):  # type: () -> list[PcodeOp]
@@ -1484,13 +1677,14 @@ class Instruction(GhidraWrapper, BodyTrait):
         return [Reference(raw) for raw in self.raw.getReferencesFrom()]
 
     @property
-    def to(self):  # type: () -> list[Reference]
+    def xrefs_to(self):  # type: () -> list[Reference]
         """Get a list of references to this instruction."""
-        return [Reference(raw) for raw in self.raw.getReferencesTo()]
+        return [Reference(raw) for raw in self.raw.getReferenceIteratorTo()]
 
-    def to_bytes(self):  # type: () -> bytes
+    @property
+    def bytes(self):  # type: () -> bytes
         """Get the bytes of this instruction."""
-        return to_bytestring(self.raw.getBytes())
+        return _bytes_from_bytelist(self.raw.getBytes())
 
     @property
     def length(self):  # type: () -> int
@@ -1501,51 +1695,30 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get the length of this instruction in bytes."""
         return self.length
 
-    def __convert_operand(self, operand):  # type: (JavaObject) -> int|str|list[str|int]
+    def __convert_operand(self, operand):  # type: (JavaObject) -> Operand
         """Convert an operand to a scalar or address."""
         from ghidra.program.model.address import Address  # type: ignore
         from ghidra.program.model.scalar import Scalar  # type: ignore
 
         if isinstance(operand, GhRegister):
-            return operand.getName()
+            return Operand(_python_str(operand.getName()))
         elif isinstance(operand, Address):
-            return operand.getOffset()
+            return Operand(operand.getOffset())
         elif isinstance(operand, Scalar):
-            return operand.getValue()
-        elif is_array(operand):
-            operands = [self.__convert_operand(o) for o in operand]  # type: ignore
+            return Operand(operand.getValue())
+        elif _is_array(operand):
+            operands = [self.__convert_operand(o).raw for o in operand]  # type: ignore
             if len(operands) == 1:
                 # Unwrap the operands if there is only one operand
-                return operands[0]
-            return operands  # type: ignore (we know there are no nested lists)
+                return Operand(operands[0])
+            return Operand(operands)  # type: ignore (we know there are no nested lists)
         else:
             raise RuntimeError("Don't know how to read operand {}".format(operand))
 
-    def operand(self, ndx):  # type: (int) -> int|str|list[int|str]
-        """Get the nth operand of this instruction as a scalar."""
+    def operand(self, ndx):  # type: (int) -> Operand
+        """Get the nth operand of this instruction as an object."""
         operand = self.raw.getOpObjects(ndx)
         return self.__convert_operand(operand)
-
-    def list(self, ndx):  # type: (int) -> list[int|str]
-        """Get the nth operand of this instruction as a list."""
-        out = self.operand(ndx)
-        if not isinstance(out, list):
-            raise RuntimeError("Operand {} is not a list".format(ndx))
-        return out
-
-    def scalar(self, ndx):  # type: (int) -> int
-        """Get the nth operand of this instruction as a scalar."""
-        out = self.operand(ndx)
-        if not isinstance(out, (int, long)):
-            raise RuntimeError("Operand {} is not a scalar".format(ndx))
-        return out
-
-    def register(self, ndx):  # type: (int) -> str
-        """Get the nth operand of this instruction as a register name."""
-        out = self.operand(ndx)
-        if not isinstance(out, Str):
-            raise RuntimeError("Operand {} is not a register".format(ndx))
-        return out
 
     @property
     def address(self):  # type: () -> int
@@ -1553,7 +1726,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         return self.raw.getAddress().getOffset()
 
     @property
-    def operands(self):  # type: () -> list[int|str|list[int|str]]
+    def operands(self):  # type: () -> list[Operand]
         """Return operands as primitive values (int or a string representation).
 
         More specifically, this will convert constants and addresses into integers,
@@ -1561,6 +1734,14 @@ class Instruction(GhidraWrapper, BodyTrait):
 
         If you know operand type, call .scalar(), .register() or .list() instead."""
         return [self.operand(i) for i in range(self.raw.getNumOperands())]
+
+    @property
+    def operand_values(self):  # type: () -> list[int|str|list[int|str]]
+        """Return operands as primitive values (int or a string representation).
+
+        This is equivalent to calling .operands() and then calling .value()
+        on each operand."""
+        return [operand.value for operand in self.operands]
 
     @property
     def flow_type(self):  # type: () -> FlowType
@@ -1582,36 +1763,41 @@ class Instruction(GhidraWrapper, BodyTrait):
         return AddressSet.create(self.address, self.length)
 
     @property
-    def fallthrough_override(self):  # type: () -> int|None
-        """Get the fallthrough address override, if any.
+    def has_fallthrough(self):  # type: () -> bool
+        """Return true if this instruction has a fallthrough."""
+        return self.raw.hasFallthrough()
 
-        Fallthrough override is the next instruction that will be executed after this
-        instruction, assuming the current instruction doesn't jump anywhere."""
+    @property
+    def fallthrough(self):  # type: () -> int|None
+        """Get the fallthrough address (next address executed), if any.
+
+        For normal instruction, this is the next instruction address. For jumps,
+        this is None. Can be overriden by fallthrough override."""
         fall = self.raw.getFallThrough()
         if not fall:
             return None
         return fall.getOffset()
 
-    @fallthrough_override.setter
-    def fallthrough_override(self, value):  # type: (Addr) -> None
+    def set_fallthrough_override(self, value):  # type: (Addr) -> None
         """Override the fallthrough address for this instruction.
 
         This sets the next instruction that will be executed after this
         instruction, assuming the current instruction doesn't jump anywhere.
+        You can clear this with clear_fallthrough_override
 
         :param value: new fallthrough address"""
         self.raw.setFallThrough(resolve(value))
-
-    @fallthrough_override.deleter
-    def fallthrough_override(self):  # type: () -> None
-        """This clears the fallthrough override for this instruction."""
-        self.raw.clearFallThroughOverride()
 
     def clear_fallthrough_override(self):  # type: () -> None
         """This clears the fallthrough override for this instruction.
 
         Alias for del self.fallthrough_override"""
-        del self.fallthrough_override
+        self.raw.clearFallThroughOverride()
+
+    @property
+    def has_fallthrough_override(self):  # type: () -> bool
+        """Return true if this instruction fallthrough was overriden."""
+        return self.raw.isFallThroughOverridden()
 
     def write_jumptable(self, targets):  # type: (list[Addr]) -> None
         """Provide a list of addresses where this instruction may jump.
@@ -1627,15 +1813,16 @@ class Instruction(GhidraWrapper, BodyTrait):
         targets = [resolve(addr) for addr in targets]
 
         for dest in targets:
+            disassemble(dest)
             self.add_operand_reference(0, dest, RefType.COMPUTED_JUMP)
 
         func = Function.get(self.address)
         if func is None:
             raise RuntimeError("Instruction is not part of a function")
 
-        targetlist = ArrayList(dest for dest in targets)
+        targetlist = ArrayList([dest for dest in targets])
         jumpTab = JumpTable(toAddr(self.address), targetlist, True)
-        jumpTab.writeOverride(func)
+        jumpTab.writeOverride(func.raw)
         CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, getMonitor())
 
 
@@ -1774,19 +1961,34 @@ class BasicBlock(AddressSet, BodyTrait):
     """Wraps a Ghidra CodeBlock object"""
 
     @staticmethod
-    def get(raw_or_address):  # type: (JavaObject|Addr) -> BasicBlock|None
-        """Get a BasicBlock object for the given address, or return None.
+    def _model(model):  # type: (str) -> Callable[[JavaObject], JavaObject]
+        if model == "basic":
+            return BasicBlockModel
+        elif model == "simple":
+            return SimpleBlockModel
+        else:
+            raise ValueError("Unsupported model type: %s" % model)
+
+    @staticmethod
+    def get(
+        raw_or_address, model="basic"
+    ):  # type: (JavaObject|str|Addr, str) -> BasicBlock|None
+        """Get a BasicBlock object containing the given address, or return None.
 
         This function is tolerant and will accept different types of arguments:
         * address as int
         * Address object
         * symbol as string (will be resolved)
-        * BasicBlock object (wrapped or unwrapped)"""
+        * BasicBlock object (wrapped or unwrapped)
+
+        :param raw_or_address: find basicblock that contains the given address.
+        :param model: Ghidra supports different types of basic block "models".
+        Supported options are "basic" and "simple"."""
 
         if raw_or_address is None:
             return None
         if can_resolve(raw_or_address):
-            block_model = SimpleBlockModel(Program.current())
+            block_model = BasicBlock._model(model)(Program.current())
             addr = try_resolve(raw_or_address)
             if addr is None:
                 return None
@@ -1798,9 +2000,9 @@ class BasicBlock(AddressSet, BodyTrait):
         return BasicBlock(raw)
 
     @staticmethod
-    def all():  # type: () -> list[BasicBlock]
+    def all(model="basic"):  # type: (str) -> list[BasicBlock]
         """Get a list of all basic blocks in the program."""
-        block_model = SimpleBlockModel(Program.current())
+        block_model = BasicBlock._model(model)(Program.current())
         return [BasicBlock(b) for b in block_model.getCodeBlocks(TaskMonitor.DUMMY)]
 
     @property
@@ -1823,15 +2025,31 @@ class BasicBlock(AddressSet, BodyTrait):
 
     @property
     def end_address(self):  # type: () -> int
-        """Get the address of the last instruction in this basic block."""
+        """Get the address of the last byte in this basic block.
+
+        Note: this is not the address of the last instruction.
+        Note: end_address - start_address is equal to length - 1. For example,
+        for one-byte basic block, start_address == end_address."""
         return self.raw.getMaxAddress().getOffset()
+
+    @property
+    def length(self):  # type: () -> int
+        """Get the length of this basic block in bytes."""
+        return self.end_address - self.start_address + 1
+
+    @property
+    def bytes(self):  # type: () -> bytes
+        """Get the bytes of this basic block.
+
+        :return: bytes of this basic block."""
+        return read_bytes(self.start_address, self.length)
 
     @property
     def instructions(self):  # type: () -> list[Instruction]
         """Get a list of instructions in this basic block."""
         result = []
         instruction = getInstructionAt(resolve(self.start_address))
-        while instruction and instruction.getAddress().getOffset() < self.end_address:
+        while instruction and instruction.getAddress().getOffset() <= self.end_address:
             result.append(Instruction(instruction))
             instruction = instruction.getNext()
         return result
@@ -2060,18 +2278,22 @@ class FunctionCall(BodyTrait):
 
     def __init__(self, function, address):  # type: (Function, Addr) -> None
         self.called_function = function
-        self.address = resolve(address)
+        self._address = resolve(address)
+
+    @property
+    def address(self):  # type: () -> int
+        return self._address.getOffset()
 
     @property
     def caller(self):  # type: () -> Function|None
         """Get the function where this function call takes place."""
-        return Function.get(self.address)
+        return Function.get(self._address)
 
     calling_function = caller
 
     @property
     def instruction(self):  # type: () -> Instruction
-        return Instruction(self.address)
+        return Instruction(self._address)
 
     @property
     def callee(self):  # type: () -> Function
@@ -2089,13 +2311,10 @@ class FunctionCall(BodyTrait):
             mov ebx, DAT_encrypted_string
             call decrypt_string
 
-        Then recovering eax them is as simple as call.infer_context()["eax"]. This
-        will NOT work well, if the parameters are initialized much earlier. In this
-        case consider using (much slower) infer_args() instead.
-        """
-        basicblock = BasicBlock(self.address)
+        Then recovering eax them is as simple as call.infer_context()["eax"]."""
+        basicblock = BasicBlock(self._address)
         emu = Emulator()
-        emu.emulate(basicblock.start_address, self.address)
+        emu.emulate(basicblock.start_address, self._address)
         return emu
 
     @property
@@ -2108,12 +2327,12 @@ class FunctionCall(BodyTrait):
         Warning: this works on decompiled functions only, so it will work
           if the call is done from a region not recognised as function.
         Warning: this method needs to decompile the function, and is therefore slow."""
-        for pcode_op in PcodeOp.get_high_pcode_at(self.address):
+        for pcode_op in PcodeOp.get_high_pcode_at(self._address):
             if pcode_op.opcode != pcode_op.CALL:
                 continue
             return pcode_op
 
-        raise RuntimeError("No CALL at {}".format(hex(self.address)))
+        raise RuntimeError("No CALL at {}".format(self.address))
 
     @property
     def high_varnodes(self):  # type: () -> list[Varnode]
@@ -2141,21 +2360,10 @@ class FunctionCall(BodyTrait):
           if the call is done from a region not recognised as function.
         Warning: this method needs to decompile the function, and is therefore slow.
         """
-        basicblock = BasicBlock(self.address)
-
-        state = {}
-        # Almost no reason not to emulate - it takes some time, but it's
-        # nothing compared to generating high pcode (required for getting args).
-        emu = Emulator()
-        state = emu.propagate_varnodes(basicblock.start_address, self.address)
-
         args = []
         for varnode in self.high_varnodes:
-            varnode = varnode.free
-            if varnode.has_value:
+            if varnode.value is not None:
                 args.append(varnode.value)
-            elif varnode in state:
-                args.append(state[varnode])
             else:
                 args.append(None)
         return args
@@ -2245,7 +2453,7 @@ class Function(GhidraWrapper, BodyTrait):
     UNDERLYING_CLASS = GhFunction
 
     @staticmethod
-    def get(addr):  # type: (Addr|JavaObject) -> Function|None
+    def get(addr):  # type: (JavaObject|str|Addr) -> Function|None
         """Return a function at the given address, or None if no function
         exists there."""
         if isinstance(addr, GhFunction):
@@ -2367,6 +2575,12 @@ class Function(GhidraWrapper, BodyTrait):
         data = DataType(datatype)
         param = ParameterImpl(name, data.raw, reg.raw, Program.current())
         self.raw.addParameter(param, SourceType.USER_DEFINED)
+
+    def fixup_body(self):  # type: () -> bool
+        """Fixup the function body: follow control flow and add thunks."""
+        return CreateFunctionCmd.fixupFunctionBody(
+            Program.current(), self.raw, getMonitor()
+        )
 
     @property
     def local_variables(self):  # type: () -> list[Variable]
@@ -2633,7 +2847,7 @@ class Function(GhidraWrapper, BodyTrait):
         for param, value in zip(self.parameters, args):
             emulator.write_varnode(param.varnode, value)
 
-        emulator.emulate_while(self.entrypoint, lambda e: e.pc in self.body)
+        emulator.emulate(self.entrypoint, stop_when=lambda pc: pc not in self.body)
         return emulator
 
     def symbolic_context(self):  # type: () -> SymbolicPropogator
@@ -3031,7 +3245,7 @@ class Emulator(GhidraWrapper):
             1337
 
         :param reg: the register to read from."""
-        return pyint(self.raw.readRegister(reg))
+        return _python_int(self.raw.readRegister(reg))
 
     def read_bytes(self, address, length):  # type: (Addr, int) -> bytes
         """Read `length` bytes at `address` from the emulated program.
@@ -3043,7 +3257,7 @@ class Emulator(GhidraWrapper):
         :param address: the address to read from
         :param length: the length to read"""
         bytelist = self.raw.readMemory(resolve(address), length)
-        return _asbytes("".join(chr(x % 256) for x in bytelist))
+        return _bytes_from_bytelist(bytelist)
 
     def read_u8(self, address):  # type: (Addr) -> int
         """Read a byte from the emulated program.
@@ -3132,14 +3346,14 @@ class Emulator(GhidraWrapper):
             >>> emu = Emulator()
             >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
             >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
-            >>> emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+            >>> emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
             >>> emu.read_varnode(func.return_variable.varnode)
             4
 
         :param varnode: the varnode to read from."""
         varnode = Varnode(varnode)
         if varnode.is_constant:
-            return varnode.value
+            return varnode.offset
         elif varnode.is_address:
             rawnum = self.read_bytes(varnode.offset, varnode.size)
             return from_bytes(rawnum)
@@ -3231,7 +3445,7 @@ class Emulator(GhidraWrapper):
             >>> emu = Emulator()
             >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
             >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
-            >>> emu.emulate_while(fnc.entrypoint, lambda e: e.pc in fnc.body)
+            >>> emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
             >>> emu.read_varnode(func.return_variable.varnode)
             4
 
@@ -3255,7 +3469,7 @@ class Emulator(GhidraWrapper):
             raise RuntimeError("Unsupported varnode type")
 
     def __run_with_hooks(self):  # type: () -> bool
-        """Run the emulator, and transparently handle all hooks.
+        """Run the Ghidra emulator, and transparently handle all hooks.
 
         :return: true if emulator stopped at a (non-hook) breakpoint, or if
           a hook asked emulator to stop (by returning False)."""
@@ -3272,15 +3486,19 @@ class Emulator(GhidraWrapper):
 
         return False
 
-    def emulate(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
-        """Emulate from start to end address.
+    def emulate_fast(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
+        """Emulate from start to end address, using Ghidra for fast emulation.
+
+        The main loop of this function is in Java, which makes it faster, but makes
+        some features (like callbacks) impossible. This function stops on error,
+        when PC reaches one of the ends, and will also call hooks.
 
         This method will set a breakpoint at the end address, and clear it after
         the emulation is done.
 
-            >>> emulator.write_bytes(0x1000, "1")
-            >>> emulator.emulate(0x1000, 0x1005)
-            >>> emulator.read_bytes(0x1000, 1)
+            >>> emulator.write_bytes(0x2000, "1")
+            >>> emulator.emulate_fast(0x1000, 0x1005)
+            >>> emulator.read_bytes(0x2000, 1)
             '0'
 
         :param start: the start address to emulate
@@ -3304,105 +3522,171 @@ class Emulator(GhidraWrapper):
             err = self.raw.getLastError()
             raise RuntimeError("Error when running: {}".format(err))
 
-    def emulate_while(
-        self, start, condition
-    ):  # type: (Addr, Callable[[Emulator], bool]) -> None
-        """Emulate from start as long as condition is met and emulator does't halt.
+    def single_step(self):  # type: () -> bool
+        """Do a single emulation step. This will step into calls.
 
-            >>> emulator.write_bytes(0x1000, "1")
-            >>> emulator.emulate_while(0x1000, lambda e: e.pc != 0x1005)
-            >>> emulator.read_bytes(0x1000, 1)
-            '0'
+        Note: This method *will* call hooks.
 
-        Note: This is slower than emulate(), because the emulation loop is
-        implemented in Python.
-
-        :param start: the start address to emulate
-        :param condition: a function that takes an Emulator instance as a parameter,
-          and decides if emulation should be continued"""
-        self.set_pc(start)
-        emu = self.raw.getEmulator()
-        emu.setHalt(False)
-
-        while not emu.getHalt() and condition(self):
-            emu.executeInstruction(True, getMonitor())
-
-        if self.raw.getLastError() is not None:
+        :return: True if the emulation stopped at a breakpoint, False otherwise."""
+        success = self.raw.step(getMonitor())
+        if not success:
             err = self.raw.getLastError()
-            raise RuntimeError("Error when running: {}".format(err))
+            raise RuntimeError("Error at {}: {}".format(self.pc, err))
 
-    def trace(
-        self, start, end, callback, maxsteps=2**48
-    ):  # type: (Addr, Addr, Callable[[Instruction], None], int) -> None
-        """Emulate from start to end address, with callback for each executed Instruction.
+        if self.pc in self._hooks:
+            self._hooks[self.pc](self)
+        elif self.is_at_breakpoint:
+            return True
+        return False
+
+    def emulate(
+        self,
+        start,
+        ends=[],
+        callback=lambda pc: None,
+        stop_when=lambda pc: False,
+        maxsteps=2**48,
+    ):  # type: (Addr, Addr|list[Addr], Callable[[int], str|None], Callable[[int], bool], int) -> None
+        """Emulate from start to end address, with callback for each executed address.
 
             >>> emu = Emulator()
-            >>> def pr(x): print(x)
-            >>> emu.trace(Function("main").entrypoint, 0, pr, 3)
+            >>> def callback(addr):
+            >>>     print(addr)
+            >>>     return True
+            >>> emu.trace(Function("main").entrypoint, callback=callback, maxsteps=3)
             SUB ESP,0x2d4
             PUSH EBX
             PUSH EBP
 
+        Callback should return one of:
+
+        * 'continue' or None, to continue execution normally
+        * 'break' to stop execution
+        * 'skip' to skip the next instruction
+        * 'retry' like continue, but call the callback again (useful after pc change)
+        * 'continue_then_break' to execute one last instruction before stopping
+
+        Returning another value will cause an exception
+
+        Callback is executed before stop_when is checked.
+
+        This method is very flexible, but because of that it may be slower than
+        pure Ghidra implementation. Consider .emulate_fast() when this method is too
+        slow for you.
+
         :param start: the start address to emulate
         :param end: the end address to emulate
-        :param callback: the callback to call for each executed instruction
+        :param callback: the callback to call before each executed instruction.
+          Return one of the predefined constants here (see the docs for more info).
+        :param stop_when: the callback to call before each executed instruction.
+          Return True here to stop emulation.
         :param maxsteps: the maximum number of steps to execute"""
         self.set_pc(start)
-        current = resolve(start)
-        end = resolve(end)
-        while current != end and maxsteps > 0:
-            success = self.raw.step(getMonitor())
-            if not success:
-                err = self.raw.getLastError()
-                raise RuntimeError("Error at {}: {}".format(current, err))
+        current = resolve(start).getOffset()
 
-            callback(Instruction(current))
-            current = self.raw.getExecutionAddress()
+        if not isinstance(ends, (list, tuple)):
+            ends = [ends]
+        ends = [resolve(e).getOffset() for e in ends]
+
+        while current not in ends and maxsteps > 0:
             maxsteps -= 1
-
-    def trace_pcode(
-        self, start, end, callback, maxsteps=2**48
-    ):  # type: (Addr, Addr, Callable[[PcodeOp], None], int) -> None
-        """Emulate from start to end address, with callback for each executed PcodeOp.
-
-        :param start: the start address to emulate
-        :param end: the end address to emulate
-        :param callback: the callback to call for each executed pcode op"""
-
-        def instr_callback(instruction):  # type: (Instruction) -> None
-            for op in instruction.pcode:
-                callback(op)
-
-        self.trace(start, end, instr_callback, maxsteps)
-
-    def propagate_varnodes(
-        self, start, end
-    ):  # type: (Addr, Addr) -> dict[Varnode, int]
-        """Propagate a known varnote state from start to end address.
-
-        This is probably not the best way to do it - there is a large chance it'll
-        be reworked to something better in the future.
-
-        :param start: the start address to propagate from
-        :param end: the end address to propagate to"""
-        known_state = {}  # type: dict[Varnode, int]
-
-        def callback(op):  # type: (PcodeOp) -> None
-            resolved = True
-            for inp in op.inputs:
-                if inp in known_state:
-                    continue
-                if inp.is_constant or inp.is_address:
-                    continue
-                resolved = False
+            command = callback(current)
+            if command is None or command == "continue":
+                pass
+            elif command == "break":
                 break
+            elif command == "skip":
+                current = Instruction(current).next.address
+                self.pc = current
+                continue
+            elif command == "retry":
+                continue
+            elif command == "continue_then_break":
+                maxsteps = 0
+            else:
+                raise RuntimeError("Unknown callback result: {}", command)
 
-            if resolved and op.output is not None:
-                res = self.read_varnode(op.output)
-                known_state[op.output] = res
+            if stop_when(current):
+                return
 
-        self.trace_pcode(start, end, callback)
-        return known_state
+            if self.single_step():
+                return
+
+            current = self.raw.getExecutionAddress().getOffset()
+
+    @property
+    def is_at_breakpoint(self):  # type: () -> bool
+        """Check if the emulator is at a breakpoint"""
+        return self.raw.getEmulator().isAtBreakpoint()
+
+
+class MemoryBlock(GhidraWrapper, BodyTrait):
+    """A Ghidra wrapper for a Ghidra MemoryBlock"""
+
+    @staticmethod
+    def get(raw_or_name):  # type: (JavaObject|str|Addr) -> MemoryBlock|None
+        """Gets a MemoryBlock by name or containing the given address.
+
+        Note: for a string argument, this will try to get memoryblock by name, and
+        if it fails, it will fall back to the regular behaviour of "resolve the symbol
+        to the address, and get element by address
+
+        :param raw_or_name: name or address of MemoryBlock to get
+        :return: the MemoryBlock, or None if not found
+        """
+        memory = Program.current().getMemory()
+        if isinstance(raw_or_name, str):
+            raw = memory.getBlock(raw_or_name)
+            if raw is not None:
+                return MemoryBlock(raw)
+        addr = try_resolve(raw_or_name)
+        if addr is None:
+            return None
+        return MemoryBlock(memory.getBlock(addr))
+
+    @staticmethod
+    def all():  # type: () -> list[MemoryBlock]
+        """Get all MemoryBlocks in the current program"""
+        raw_blocks = Program.current().getMemory().getBlocks()
+        return [MemoryBlock(raw) for raw in raw_blocks]
+
+    @property
+    def comment(self):  # type: () -> str
+        """Get the comment associated with this MemoryBlock"""
+        return self.raw.getComment()
+
+    @property
+    def start(self):  # type: () -> int
+        """Get the first address of this MemoryBlock"""
+        return self.raw.getStart().getOffset()
+
+    @property
+    def name(self):  # type: () -> str
+        """Get the name of this MemoryBlock"""
+        return self.raw.getName()
+
+    address = start
+
+    @property
+    def end(self):  # type: () -> int
+        return self.raw.getEnd().getOffset()
+
+    @property
+    def size(self):  # type: () -> int
+        """Get the size of this MemoryBlock"""
+        return int(self.raw.getSize())
+
+    length = size
+
+    @property
+    def body(self):  # type: () -> AddressSet
+        """Get the address range this instruction."""
+        return AddressSet.create(self.address, self.length)
+
+    @property
+    def bytes(self):  # type: () -> bytes
+        """Get the bytes of this instruction."""
+        return read_bytes(self.address, self.length)
 
 
 class Program(GhidraWrapper):
@@ -3432,7 +3716,7 @@ class Program(GhidraWrapper):
 
         :return: the current location in the program
         """
-        return currentLocation.getAddress().getOffset()
+        return getState().getCurrentLocation().getAddress().getOffset()
 
     @staticmethod
     def call_graph():  # type: () -> Graph[Function]
@@ -3450,6 +3734,11 @@ class Program(GhidraWrapper):
     def basicblocks():  # type: () -> list[BasicBlock]
         """Get all the basic blocks defined in the program."""
         return BasicBlock.all()
+
+    @staticmethod
+    def memory_blocks():  # type: () -> list[MemoryBlock]
+        """Get memory blocks defined for the current program."""
+        return MemoryBlock.all()
 
     @staticmethod
     def functions():  # type: () -> list[Function]
@@ -3476,19 +3765,13 @@ class Program(GhidraWrapper):
         (for example, many tabs in the same tool)."""
         return getCurrentProgram()
 
+    @staticmethod
+    def analyze():  # type: () -> None
+        """Analyze changes. This will block when autoanalysis changes place.
 
-def to_bytestring(val):  # type: (bytes | list[int]) -> bytes
-    """Ensure the passed value is a bytestring.
-
-        >>> to_bytestring([97, 98, 99])
-        'abc'
-        >>> to_bytestring("aaa")
-        'abc'
-
-    This is used to convert java byte arrays to a proper python bytestring."""
-    if not isinstance(val, Str):
-        return _asbytes("".join(chr(i % 256) for i in val))
-    return val
+        Run this when you did changes that you will need to proceed with the rest
+        of the script."""
+        analyzeChanges(Program.current())
 
 
 def disassemble_bytes(
@@ -3500,6 +3783,8 @@ def disassemble_bytes(
 
         >>> disassemble_bytes('F')
         [INC ESI]
+
+    Note: Address is important, because instruction meaning may depend on the location.
 
     :param data: the bytes to disassemble
     :param addr: the (virtual) address of the first instruction
@@ -3528,12 +3813,6 @@ def disassemble_bytes(
     return result
 
 
-# TODO: wrap this function in a Pythonic API too
-def _get_memory_block(addr):  # type: (Addr) -> JavaObject
-    """Get the memory block containing the given address."""
-    return Program.current().getMemory().getBlock(resolve(addr))
-
-
 def disassemble_at(
     address, max_instr=None, max_bytes=None
 ):  # type: (Addr, int|None, int|None) -> list[Instruction]
@@ -3550,7 +3829,7 @@ def disassemble_at(
     :param max_bytes: maximum number of bytes to disassemble (None for no limit)
     :param max_instr: maximum number of instructions to disassemble (None for no limit)
     :return: a list of Instruction objects"""
-    address = resolve(address)
+    addr = resolve(address)
 
     if max_instr is None:
         _max_instr = 1 if max_bytes is None else max_bytes
@@ -3558,19 +3837,19 @@ def disassemble_at(
         _max_instr = max_instr
 
     if max_bytes is None:
-        to_block_end = _get_memory_block(address).getEnd().subtract(address)
+        to_block_end = MemoryBlock(addr).end - addr.getOffset()
         # Hacky and inefficient, but good enough for now (and correct)
         _max_bytes = min(to_block_end, _max_instr * 16)
     else:
         _max_bytes = max_bytes
-    data = read_bytes(address, _max_bytes)
+    data = read_bytes(addr, _max_bytes)
 
-    return disassemble_bytes(data, address, _max_instr)
+    return disassemble_bytes(data, addr, _max_instr)
 
 
 def assemble_at(
     address, instructions, pad_to=0
-):  # type: (Addr, str|list[str], int) -> None
+):  # type: (Addr, str|list[str], int) -> list[Instruction]
     """Assemble the given instructions and write them at the given address.
 
     Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
@@ -3580,7 +3859,8 @@ def assemble_at(
 
     :param address: the address where to write the instructions
     :param instructions: a list of instructions, or a single instruction to assemble
-    :param pad_to: optionally, pad the code with NOPs to reach this size"""
+    :param pad_to: optionally, pad the code with NOPs to reach this size
+    :return: the newly assembled instructions"""
     # Note: Assembler API is actually quite user-friendly and doesn't require
     # wrapping. But let's wrap it for consistency.
     addr = resolve(address)
@@ -3603,18 +3883,20 @@ def assemble_at(
             if xref.is_call or xref.is_jump:
                 disassemble(toAddr(xref.to_address))
 
+    return result
 
-def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> bytes
+
+def assemble_to_bytes(instructions, address=0):  # type: (str|list[str], Addr) -> bytes
     """Assemble the given instructions and return them as an array of bytes.
 
     Note: Ghidra is a bit picky, and case-sensitive when it comes to opcodes.
     For example, use "MOV EAX, EBX" instead of "mov eax, ebx".
 
-    Note: Address is required, because instruction bytes may depend on the location.
+    Note: Address is important, because instruction bytes may depend on the location.
 
-        >>> assemble_to_bytes(0, "ADD EAX, EAX")
+        >>> assemble_to_bytes("ADD EAX, EAX")
         "\x01\xc0"
-        >>> assemble_to_bytes(0, ["ADD EAX, EAX", "ADD EAX, EAX"])
+        >>> assemble_to_bytes(["ADD EAX, EAX", "ADD EAX, EAX"])
         "\x01\xc0\x01\xc0"
 
     :param address: the address to use as a base for instructions
@@ -3624,11 +3906,27 @@ def assemble_to_bytes(address, instructions):  # type: (Addr, str|list[str]) -> 
     addr_obj = resolve(address)
     asm = Assemblers.getAssembler(Program.current())
     if isinstance(instructions, Str):
-        return to_bytestring(asm.assembleLine(addr_obj, instructions))
+        return _bytes_from_bytelist(asm.assembleLine(addr_obj, instructions))
     result = _asbytes("")
     for instr in instructions:
-        result += to_bytestring(asm.assembleLine(addr_obj.add(len(result)), instr))
+        result += _bytes_from_bytelist(
+            asm.assembleLine(addr_obj.add(len(result)), instr)
+        )
     return result
+
+
+def assemble(
+    instructions, address=0
+):  # type: (str|list[str], Addr) -> list[Instruction]
+    """Assemble the given instructions and return them as a list of instructions.
+
+    Note: Address is important, because instruction meaning may depend on the location.
+
+    :param address: the address where the instructious would be written
+    :param instructions: a list of instructions, or a single instruction to assemble
+    :return: the newly assembled instructions"""
+    data = assemble_to_bytes(instructions, address)
+    return disassemble_bytes(data, address)
 
 
 def get_string(address):  # type: (Addr) -> str|None
@@ -3740,17 +4038,16 @@ def read_bytes(address, length):  # type: (Addr, int) -> bytes
     :param address: address from which to read.
     :param length: number of bytes to read."""
     address = resolve(address)
-    return _asbytes("".join(chr(x % 256) for x in getBytes(address, length)))
+    return _bytes_from_bytelist(getBytes(address, length))
 
 
-def from_bytes(b):  # type: (bytes | list[int]) -> int
-    """Decode a byte stream as a little-endian integer.
+def from_bytes(b):  # type: (bytes) -> int
+    """Decode a bytes as a little-endian integer.
 
-        >>> from_bytes([0x01, 0x02])
-        0x0201
+        >>> from_bytes('ab')
+        25185
 
     :param b: byte stream to decode."""
-    b = to_bytestring(b)
     bl = _bytes_as_list(b)
     return sum(v << (i * 8) for i, v in enumerate(bl))
 
@@ -3768,6 +4065,23 @@ def to_bytes(value, length):  # type: (int, int) -> bytes
         out += chr(value & 0xFF)
         value >>= 8
     return _asbytes(out)
+
+
+def write_bytes(address, data):  # type: (Addr, bytes) -> None
+    """Write the provided bytes at a given address.
+
+        >>> write_bytes(0x1000, "test)
+        >>> read_bytes(0x1000, 4)
+        'test'
+
+    :param address: address where bytes should be written.
+    :param data: bytes to write."""
+    addr = resolve(address)
+    try:
+        setBytes(addr, data)
+    except:
+        clearListing(addr, addr.add(len(data) - 1))
+        setBytes(addr, data)
 
 
 def unhex(s):  # type: (str) -> bytes
