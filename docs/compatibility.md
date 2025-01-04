@@ -19,7 +19,7 @@ ghidralib \ ghidra  | 11.2.1  | 11.3 (dev) |
 0.1.0               | ✅      |            |
 0.2.0               | ✅      | ✅         |
 
-(Compatibility is checked by running a [testsuite](../tests/ghidralib_test.py)
+(Compatibility is checked by running a [testsuite](https://github.com/msm-code/ghidralib/blob/master/tests/ghidralib_test.py)
 on a test binary)
 
 ### Architectures
