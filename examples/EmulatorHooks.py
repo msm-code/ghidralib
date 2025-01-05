@@ -8,13 +8,13 @@ from ghidralib import *
 
 
 def printf(emu):
-    # Hook function gets emulator as parameter, and returns a "should_continue" bool.
+    # Hook function gets emulator as parameter, and returns a result -
+    # one of "continue", "break" or "skip". Default result is "continue"
     arg = emu.read_cstring(emu["rsi"])
     print("printf called with '{}'".format(arg))
     # Execute a RET operation manually
     emu.pc = emu.read_u64(emu.sp)
     emu.sp += 8
-    return True
 
 
 e = Emulator()

@@ -20,7 +20,13 @@ For more details, see the documentation at https://msm-code.github.io/ghidralib/
 """
 
 from abc import abstractmethod
-from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak, ClangTokenGroup as GhClangTokenGroup, DecompInterface
+from ghidra.app.decompiler import (
+    ClangSyntaxToken,
+    ClangCommentToken,
+    ClangBreak,
+    ClangTokenGroup as GhClangTokenGroup,
+    DecompInterface,
+)
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
 from ghidra.app.util import PseudoDisassembler
 from ghidra.app.util.cparser.C import CParser
@@ -860,7 +866,7 @@ class Register(GhidraWrapper):
     @property
     def size(self):  # type: () -> int
         """Return the size of this register in bytes
-        
+
         This will tell the total number of bytes this register contains -
         because register values don't have to be byte-aligned"""
         return self.raw.getNumBytes()
@@ -2270,7 +2276,7 @@ class Parameter(Variable):
 
 
 class FunctionCall(BodyTrait):
-    """Represents an abstract function call.
+    """Represents a function call at a given location in the program.
 
     Can be used to get the function being called and the parameters passed to it."""
 
@@ -2811,7 +2817,7 @@ class Function(GhidraWrapper, BodyTrait):
         return Graph.construct(self.basicblocks, lambda v: v.destinations)
 
     def emulate(self, *args, **kwargs):  # type: (int, Emulator) -> Emulator
-        """Emulate the function call with the given arguments.
+        """Emulate the function call with given args, and return final emulation state.
 
         The arguments are passed using a calling convention defined in Ghidra. If
         you want to use a different calling convention, or do additional setup,
@@ -2821,8 +2827,8 @@ class Function(GhidraWrapper, BodyTrait):
         to do a pre-call setup (for example, write string parameters to memory). But
         don't use this to change call parameters, as they are always overwriten.
 
-            >>> fnc = Function(0x004061EC)
-            >>> emu = fnc.emulate(-0x80000000)
+            >>> fnc = Function("ResolveName")
+            >>> emu = fnc.emulate(1379010213)
             >>> emu.read_unicode(emu["eax"])
             "HKEY_CLASSES_ROOT"
 
@@ -2845,8 +2851,32 @@ class Function(GhidraWrapper, BodyTrait):
         for param, value in zip(self.parameters, args):
             emulator.write_varnode(param.varnode, value)
 
-        emulator.emulate(self.entrypoint, stop_when=lambda pc: pc not in self.body)
+        emulator.emulate(self.entrypoint, stop_when=lambda emu: emu.pc not in self.body)
         return emulator
+
+    def emulate_simple(self, *args, **kwargs):  # type: (int, Emulator) -> int
+        """Emulate the function call with given args, and return the return value.
+
+        The arguments are passed using a calling convention defined in Ghidra. If
+        you want to use a different calling convention, or do additional setup,
+        you have to use the Emulator class directly.
+
+        You can pass your own emulator using the `emulator` kwarg. You can use this
+        to do a pre-call setup (for example, write string parameters to memory). But
+        don't use this to change call parameters, as they are always overwriten.
+
+        Note: the name is not great, but I can't think of a better name that is
+        not also very long.
+
+            >>> fnc = Function("CustomHash")
+            >>> fnc.emulate_simple("HKEY_CLASSES_ROOT")
+            1379010213
+
+        :param args: The arguments to pass to the function.
+        :param kwargs: pass `emulator` kwarg to use the provided emulator
+          (default: create a new one)."""
+        context = self.emulate(*args, **kwargs)
+        return context.read_varnode(self.return_variable.varnode)
 
     def symbolic_context(self):  # type: () -> SymbolicPropogator
         """Returns a SymbolicPropogator instance for this function.
@@ -3152,15 +3182,18 @@ class Emulator(GhidraWrapper):
         self.raw.writeRegister(self.raw.getStackPointerRegister(), stack_off)
 
         # TODO: add a simple allocation manager
-        self._hooks = {}  # type: dict[int, Callable[[Emulator], bool]]
+        self._hooks = {}  # type: dict[int, Callable[[Emulator], str|None]]
 
     def add_hook(
         self, address, hook
-    ):  # type: (Addr, Callable[[Emulator], bool]) -> None
+    ):  # type: (Addr, Callable[[Emulator], str|None]) -> None
         """Add a hook at a specified address.
 
-        Hook is a function that gets emulator as parameter, and returns a
-        "should_continue" bool.
+        Hook is a function that gets emulator as parameter. It can return one of:
+
+        * 'continue' or None, to continue execution normally
+        * 'break' to stop execution
+        * 'skip' to skip the next instruction
 
         Note: multiple hooks at the same address are not currently supported."""
         addr = resolve(address).getOffset()
@@ -3344,7 +3377,7 @@ class Emulator(GhidraWrapper):
             >>> emu = Emulator()
             >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
             >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
-            >>> emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
+            >>> emu.emulate(fnc.entrypoint, stop_when=lambda emu: emu.pc not in fnc.body)
             >>> emu.read_varnode(func.return_variable.varnode)
             4
 
@@ -3443,7 +3476,7 @@ class Emulator(GhidraWrapper):
             >>> emu = Emulator()
             >>> emu.write_varnode(fnc.parameters[0].varnode, 2)
             >>> emu.write_varnode(fnc.parameters[1].varnode, 2)
-            >>> emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
+            >>> emu.emulate(fnc.entrypoint, stop_when=lambda emu: emu.pc not in fnc.body)
             >>> emu.read_varnode(func.return_variable.varnode)
             4
 
@@ -3469,20 +3502,31 @@ class Emulator(GhidraWrapper):
     def __run_with_hooks(self):  # type: () -> bool
         """Run the Ghidra emulator, and transparently handle all hooks.
 
-        :return: true if emulator stopped at a (non-hook) breakpoint, or if
-          a hook asked emulator to stop (by returning False)."""
+        :return: True if emulator stopped at a breakpoint, or
+          hook asked emulator to stop (by returning break)."""
 
         while not getMonitor().isCancelled():
             is_breakpoint = self.raw.run(getMonitor())
             if self.pc not in self._hooks:
                 return is_breakpoint
 
-            continue_execution = self._hooks[self.pc](self)
-            if not continue_execution:
-                # We return True to signal that no emulation error occured.
+            result = self._hooks[self.pc](self)
+            if self.__handle_hook_result(result):
                 return True
 
         return False
+
+    def add_breakpoint(self, address):  # type: (Addr) -> None
+        """Add a breakpoint at the given address.
+
+        :param address: the address to break on"""
+        self.raw.setBreakpoint(resolve(address))
+
+    def clear_breakpoint(self, address):  # type: (Addr) -> None
+        """Clear a breakpoint at the given address.
+
+        :param address: the address to clear breakpoint from"""
+        self.raw.clearBreakpoint(resolve(address))
 
     def emulate_fast(self, start, ends):  # type: (Addr, Addr|list[Addr]) -> None
         """Emulate from start to end address, using Ghidra for fast emulation.
@@ -3507,50 +3551,76 @@ class Emulator(GhidraWrapper):
             ends = [ends]
 
         for end in ends:
-            end = resolve(end)
-            self.raw.setBreakpoint(end)
+            self.add_breakpoint(end)
 
         is_breakpoint = self.__run_with_hooks()
 
         for end in ends:
-            end = resolve(end)
-            self.raw.clearBreakpoint(end)
+            self.clear_breakpoint(end)
 
         if not is_breakpoint:
             err = self.raw.getLastError()
             raise RuntimeError("Error when running: {}".format(err))
+
+    def __handle_hook_result(self, result):  # type: (str|None) -> bool
+        """Handle a hook return value and return True if emulation should stop."""
+        if result is None or result == "continue":
+            return False
+        elif result == "skip":
+            self.pc = Instruction(self.pc).next.address
+            return False
+        elif result == "break":
+            return True
+        else:
+            raise RuntimeError("Invalid hook return value: {}".format(result))
 
     def single_step(self):  # type: () -> bool
         """Do a single emulation step. This will step into calls.
 
         Note: This method *will* call hooks.
 
-        :return: True if the emulation stopped at a breakpoint, False otherwise."""
+        :return: True if the emulation should be stopped, False otherwise."""
         success = self.raw.step(getMonitor())
         if not success:
             err = self.raw.getLastError()
             raise RuntimeError("Error at {}: {}".format(self.pc, err))
 
         if self.pc in self._hooks:
-            self._hooks[self.pc](self)
-        elif self.is_at_breakpoint:
+            result = self._hooks[self.pc](self)
+            return self.__handle_hook_result(result)
+        if self.is_at_breakpoint:
             return True
         return False
+
+    @staticmethod
+    def emulate_new(
+        start,
+        ends=[],
+        callback=lambda emu: None,
+        stop_when=lambda emu: False,
+        maxsteps=2**48,
+    ):  # type: (Addr, Addr|list[Addr], Callable[[Emulator], str|None], Callable[[Emulator], bool], int) -> Emulator
+        """Emulate from start to end address, with callback for each executed address.
+
+        This function creates a new emulator, runs emulate on it, and returns it.
+        See emulate documentation for information about the parameters."""
+        emu = Emulator()
+        emu.emulate(start, ends, callback, stop_when, maxsteps)
+        return emu
 
     def emulate(
         self,
         start,
         ends=[],
-        callback=lambda pc: None,
-        stop_when=lambda pc: False,
+        callback=lambda emu: None,
+        stop_when=lambda emu: False,
         maxsteps=2**48,
-    ):  # type: (Addr, Addr|list[Addr], Callable[[int], str|None], Callable[[int], bool], int) -> None
+    ):  # type: (Addr, Addr|list[Addr], Callable[[Emulator], str|None], Callable[[Emulator], bool], int) -> None
         """Emulate from start to end address, with callback for each executed address.
 
             >>> emu = Emulator()
-            >>> def callback(addr):
-            >>>     print(addr)
-            >>>     return True
+            >>> def callback(emu):
+            >>>     print("executing {:x}'.format(emu.pc))
             >>> emu.trace(Function("main").entrypoint, callback=callback, maxsteps=3)
             SUB ESP,0x2d4
             PUSH EBX
@@ -3564,9 +3634,8 @@ class Emulator(GhidraWrapper):
         * 'retry' like continue, but call the callback again (useful after pc change)
         * 'continue_then_break' to execute one last instruction before stopping
 
-        Returning another value will cause an exception
-
-        Callback is executed before stop_when is checked.
+        Returning another value will cause an exception Callback is executed before
+        stop_when condition is checked.
 
         This method is very flexible, but because of that it may be slower than
         pure Ghidra implementation. Consider .emulate_fast() when this method is too
@@ -3580,37 +3649,29 @@ class Emulator(GhidraWrapper):
           Return True here to stop emulation.
         :param maxsteps: the maximum number of steps to execute"""
         self.set_pc(start)
-        current = resolve(start).getOffset()
 
         if not isinstance(ends, (list, tuple)):
             ends = [ends]
         ends = [resolve(e).getOffset() for e in ends]
 
-        while current not in ends and maxsteps > 0:
+        while maxsteps > 0:
             maxsteps -= 1
-            command = callback(current)
-            if command is None or command == "continue":
-                pass
-            elif command == "break":
+            if self.pc in ends:
                 break
-            elif command == "skip":
-                current = Instruction(current).next.address
-                self.pc = current
-                continue
-            elif command == "retry":
+
+            command = callback(self)
+            if command == "retry":
                 continue
             elif command == "continue_then_break":
                 maxsteps = 0
-            else:
-                raise RuntimeError("Unknown callback result: {}", command)
+            elif self.__handle_hook_result(command):
+                return
 
-            if stop_when(current):
+            if stop_when(self):
                 return
 
             if self.single_step():
                 return
-
-            current = self.raw.getExecutionAddress().getOffset()
 
     @property
     def is_at_breakpoint(self):  # type: () -> bool

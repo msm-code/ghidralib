@@ -554,6 +554,11 @@ def test_emulator():
     assert emu.pc == 0x403ED0
 
     emu = Emulator()
+    emu.add_breakpoint(0x403ED0)
+    emu.emulate(0x403EC1)
+    assert emu.pc == 0x403ED0
+
+    emu = Emulator()
     assert emu["esi"] == 0
     emu.emulate_fast(0x403ECB, 0x403ED0)
     assert emu["esi"] == 0xFFFF
@@ -564,29 +569,27 @@ def test_emulator():
 
     emu = Emulator()
     emu.emulate(0x403ECB, maxsteps=2)
-    assert emu.pc == 0x405f96
+    assert emu.pc == 0x405F96
 
     emu = Emulator()
     emu.emulate(0x403ECB, ends=[0x403ED0, 0x1234])
     assert emu.pc == 0x403ED0
 
     emu = Emulator()
-    emu.emulate(0x403ECB, stop_when=lambda pc: pc == 0x403ED0)
+    emu.emulate(0x403ECB, stop_when=lambda emu: emu.pc == 0x403ED0)
     assert emu.pc == 0x403ED0
 
     was_called = [False]
 
-    def ensure_called(pc):
+    def ensure_called(emu):
         was_called[0] = True
 
     emu = Emulator()
     emu.emulate(0x403ECB, 0x403ED0, callback=ensure_called)
     assert was_called[0]
 
-    last_pc = [0]
-
     def make_returner(value):
-        def wrapped(pc):
+        def wrapped(emu):
             return value
 
         return wrapped
@@ -638,11 +641,13 @@ def test_emulator():
     emu = fnc.emulate(-0x80000000)
     assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
 
+    assert fnc.emulate_simple(-0x80000000) == emu["eax"]
+
     # Low-level function emulation API
     fnc = Function(0x004061EC)
     emu = Emulator()
     emu.write_varnode(fnc.parameters[0].varnode, -0x80000000)
-    emu.emulate(fnc.entrypoint, stop_when=lambda pc: pc not in fnc.body)
+    emu.emulate(fnc.entrypoint, stop_when=lambda emu: emu.pc not in fnc.body)
     assert emu.read_unicode(emu["eax"]) == "HKEY_CLASSES_ROOT"
 
     mock_executed = [False]
@@ -651,7 +656,6 @@ def test_emulator():
         mock_executed[0] = True
         emu.pc = emu.read_u64(emu.sp)
         emu.sp += 8
-        return True
 
     fun = Function(0x406035)
     emu = Emulator()
@@ -712,7 +716,7 @@ def test_util():
     assert assemble_to_bytes("ADD EAX, EAX") == b("\x01\xc0")
     # TODO: assemble_at
 
-    assert from_bytes(b('ab')) == 25185
+    assert from_bytes(b("ab")) == 25185
     assert to_bytes(0x0201, 2) == b("\x01\x02")
     assert to_bytes(0x0201, 4) == b("\x01\x02\x00\x00")
     assert unhex("0102") == b("\x01\x02")
@@ -727,6 +731,7 @@ def test_util():
 
 def run():
     print("Running with {}".format(sys.version))
+    test_emulator()
 
     for f in globals():
         if f.startswith("test_"):
