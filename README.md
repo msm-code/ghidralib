@@ -135,7 +135,7 @@ More detailed tutorial about specific features is in development. Completed chap
 
 * [Emulator](https://msm-code.github.io/ghidralib/emulator/)
 
-If you prefer to learn by example, tou can also browse the [examples](./examples/) directory.
+If you prefer to learn by example, you can also browse the [examples](./examples/) directory.
 
 A fair warning: ghidralib is still actively developed and the API may change
 slightly in the future. But this doesn't matter for your one-off scripts, does it?

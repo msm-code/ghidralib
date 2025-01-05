@@ -32,7 +32,9 @@ void check(int value) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc != 2) { return 1; }
     check(atoi(argv[1]));
+    return 0;
 }
 ```
 
@@ -274,6 +276,10 @@ emu.add_hook(Symbol("hash").address, hash_hook)
 emu.emulate(Symbol("check").address)
 ```
 
+**Exercise**: Create a hook for `atoi` function that will simulate the libc function -
+it should parse the string from the parameter and return it in RAX. Test it by emulating
+the "call atoi" instruction with a string parameter.
+
 ### State inspection
 
 Of course, after emulation we are interested in the final state of the emulator.
@@ -318,6 +324,10 @@ For example, this is levaraged by `Function.emulate`, to emulate functions in a 
 It doesn't get any easier than that. The `simple` in the name refers to the return value -
 in many cases you will want to use `Function.emulate` to get the whole context of the
 emulator after execution.
+
+**Exercise**: Complete the `atoi` hook from the previous exercise first. Then create an emulator,
+add `printf` and `atoi` hooks, and execute a `main` function with the correct parameters.
+This will require you to pass correct `argc` and `argv` parameters.
 
 ### Misc features
 
