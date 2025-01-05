@@ -186,8 +186,8 @@ for our use-case here.</p>
 and <code>emu.write_register</code>. Consider using the more verbose format when writing
 reusable scripts, but <code>emu["EAX"]</code> is faster to type when working interactively.</p>
 <h3 id="hooks">Hooks</h3>
-<p>Often we are very interested in the details of the execution, and we want to
-process every executed instruction. For this we can use the <code>callback</code> parameter:</p>
+<p>Often we are interested in the details of the execution, and we want to
+process every instruction in some way. We can easily do this using the <code>callback</code> parameter:</p>
 <pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
 &gt;&gt;&gt; def print_callback(emu):
 ...     instr = Instruction(emu.pc)
@@ -379,7 +379,7 @@ PUSH EBP
 <p>Especially if you're emulatingh random pieces of code, setting maxsteps
 to something reasonable (like 2000 instructions) may save you from accidentaly
 executing an infinite loops.</p>
-<p><strong>breakpoints</strong></p>
+<p><strong>Breakpoints</strong></p>
 <p>You can set and remove breakpoints using <code>add_breakpoint</code> and <code>clear_breakpoint</code>
 methods</p>
 <p><strong>emulate_fast</strong></p>
@@ -390,6 +390,37 @@ main loop of the emulation in Java, which may matter in some cases.
 The downside is that it doesn't support callbacks or instruction counting -
 you can only emulate until a specific address. As an upside, function hooks
 are supprted.</p>
+<p><strong>Emulation shorthands</strong></p>
+<p>To save precious keystrokes you may combine creating an emulator, running it,
+and inspecting the result into one step with:</p>
+<pre><code class="language-python">&gt;&gt;&gt; Emulator.new(&quot;main&quot;, maxsteps=100)[&quot;EAX&quot;]
+128
+</code></pre>
+<p>This convenience wrapper is equivalent to the following code:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; emu.emulate(&quot;main&quot;, maxsteps=100)
+&gt;&gt;&gt; emu[&quot;EAX&quot;]
+128
+</code></pre>
+<p>Some other objects also provide helpers to do the obvious thing with emulator.
+For example, you can emulate a function call with:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Function(&quot;test&quot;).emulate(10)
+&gt;&gt;&gt; emu[&quot;EAX&quot;]
+113
+&gt;&gt;&gt; # Or an even shorter version
+&gt;&gt;&gt; Function(&quot;test&quot;).emulate_simple(10)
+113
+</code></pre>
+<p><strong>Unicorn compatibility</strong></p>
+<p>There is a very, very thin compatibility layer with Unicorn. There are aliases
+provided for the following Unicorn methods: <code>reg_write</code>, <code>reg_read</code>, <code>mem_write</code>,
+<code>mem_read</code>, <code>mem_map</code>, <code>emu_start</code>. Why? The idea is that many people already
+know Unicorn. It may make it a tiny bit easier for them if they can use familiar
+method names instead of learning a completely new set.</p>
+<p>The goal is not to provide actual compatibility layer - Unicorn is a very different
+library and <code>ghidralib</code> won't replace it. The only goal is really so Unicorn users
+can use familiar names if they forget ghidralib equivalents. If you are not
+an Unicorn user, don't use them.</p>
 <h3 id="learn-more">Learn more</h3>
 <p>Check out relevant examples in the <code>examples</code> directory, especially:</p>
 <ul>
