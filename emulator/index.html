@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Emulator - Ghidralib</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../assets/_mkdocstrings.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Emulator";
+        var mkdocs_page_input_path = "emulator.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ghidralib
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Ghidralib</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../compatibility/">Compatibility</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Emulator</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#basics">Basics</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#hooks">Hooks</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#hooks-and-external-functions">Hooks and external functions</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#state-inspection">State inspection</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#misc-features">Misc features</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#learn-more">Learn more</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../getting_started/">Getting Started</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">API reference</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ghidralib</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Emulator</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="emulator">Emulator</h1>
+<p>Ghidra features a powerful PCode emulator, which can be used to emulate whole
+functions or pieces of code.</p>
+<p>Ghidralib wraps this emulator with a class called <code>Emulator</code>. The basic usage is
+as follows:</p>
+<pre><code class="language-python">emu = Emulator()
+emu.emulate(0x400000, 0x400010)
+print(emu[&quot;eax&quot;])
+</code></pre>
+<h3 id="basics">Basics</h3>
+<p>Looks easy enough, now let's try it in practice. Create and compile a following C
+program:</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+int hash(int value) {
+    return (value * 10) + (value ^ 7);
+}
+
+void check(int value) {
+    if (hash(value) == 189) {
+        printf(&quot;Success!&quot;);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    check(atoi(argv[1]));
+}
+</code></pre>
+<p>Compile it with <code>gcc -O0 test.c -o test</code>. Make sure to disable optimisation with
+<code>-O0</code>, so the functions are not optimized out. Now load this program to Ghidra,
+and open interactive console. And check that everything is in order:</p>
+<pre><code class="language-python">&gt;&gt;&gt; from ghidralib import *
+&gt;&gt;&gt; print(hex(Function(&quot;main&quot;).address))
+0x401190
+&gt;&gt;&gt; print(hex(Function(&quot;check&quot;).address))
+0x401159
+&gt;&gt;&gt; print(hex(Function(&quot;hash&quot;).address))
+0x401136
+</code></pre>
+<p>Now the main point, let's try the Emulator. We may want to emulate the <code>hash</code> function
+to check how it behaves. For emulation we need a start and end address. You can copy
+it from the listing view, but for the demonstration I will print that with python too:</p>
+<pre><code class="language-python">hash_function = Function(&quot;hash&quot;)
+&gt;&gt;&gt; for instr in hash_function.instructions:
+...    print(&quot;0x{:x} {}&quot;.format(instr.address, instr))
+... 
+0x401136 PUSH RBP
+0x401137 MOV RBP,RSP
+0x40113a MOV dword ptr [RBP + -0x4],EDI
+0x40113d MOV EDX,dword ptr [RBP + -0x4]
+0x401140 MOV EAX,EDX
+0x401142 SHL EAX,0x2
+0x401145 ADD EAX,EDX
+0x401147 ADD EAX,EAX
+0x401149 MOV EDX,EAX
+0x40114b MOV EAX,dword ptr [RBP + -0x4]
+0x40114e XOR EAX,0x7
+0x401151 ADD EAX,EDX
+0x401153 POP RBP
+0x401154 XOR EDX,EDX
+0x401156 XOR EDI,EDI
+0x401158 RET
+</code></pre>
+<p><strong>Note</strong>: we assume Linux x64 ABI everywhere. If you're on Windows or another
+architecture, you'll need to adjust the code (especially register names).</p>
+<p>So we want to emulate between 0x401136 and 0x401158, and the parameter is in EDI.</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; emu[&quot;RDI&quot;] = 10  # We asume Linux x64 ABI
+&gt;&gt;&gt; emu.emulate(0x401136, 0x401158)
+&gt;&gt;&gt; print(emu[&quot;RAX&quot;])
+113
+</code></pre>
+<p>Great, we successfully emulated our first function. Instead of using hardcoded
+addresses, it's usually easier to use object attributes. This is equivalent:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; emu[&quot;RDI&quot;] = 10
+&gt;&gt;&gt; emu.emulate(hash_function.address, hash_function.exitpoints)
+&gt;&gt;&gt; print(emu[&quot;RAX&quot;])
+113
+</code></pre>
+<p>Function.exitpoints is a list that contains all function exit points - perfect
+for our use-case here.</p>
+<p>By the way, instead of indexing like <code>emu["EAX"]</code> you can use <code>emu.read_register</code>
+and <code>emu.write_register</code>. Consider using the more verbose format when writing
+reusable scripts, but <code>emu["EAX"]</code> is faster to type when working interactively.</p>
+<h3 id="hooks">Hooks</h3>
+<p>Often we are very interested in the details of the execution, and we want to
+process every executed instruction. For this we can use the <code>callback</code> parameter:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; def print_callback(emu):
+...     instr = Instruction(emu.pc)
+...     print(&quot;executing 0x{:x} {}&quot;.format(emu.pc, instr))
+
+&gt;&gt;&gt; emu.emulate(hash_function.address, hash_function.exitpoints, callback=print_callback)
+executing 0x401136 PUSH RBP
+executing 0x401137 MOV RBP,RSP
+executing 0x40113a MOV dword ptr [RBP + -0x4],EDI
+executing 0x40113d MOV EDX,dword ptr [RBP + -0x4]
+executing 0x401140 MOV EAX,EDX
+executing 0x401142 SHL EAX,0x2
+executing 0x401145 ADD EAX,EDX
+executing 0x401147 ADD EAX,EAX
+executing 0x401149 MOV EDX,EAX
+executing 0x40114b MOV EAX,dword ptr [RBP + -0x4]
+executing 0x40114e XOR EAX,0x7
+executing 0x401151 ADD EAX,EDX
+executing 0x401153 POP RBP
+executing 0x401154 XOR EDX,EDX
+executing 0x401156 XOR EDI,EDI
+</code></pre>
+<p>You can change the emulator context in the hook, and you can control the execution
+using the callback return value. In particular, you can return:</p>
+<ul>
+<li><code>continue</code> to continue execution normally (this is the default)</li>
+<li><code>break</code> to stop execution immediately</li>
+<li><code>continue_then_break</code> to stop execution after executing the current instruction</li>
+<li><code>skip</code> to skip the current instruction and execute the one immediately after it</li>
+<li><code>retry</code> means that emulator should try to execute the same instruction again.
+    This is only useful if you changed PC in the callback and want to reevaluate it.</li>
+</ul>
+<p>So for example, instead of providing the return address directly you can
+execute until the <code>ret</code> instruction:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; def execute_until_ret(emu):
+...     instr = Instruction(emu.pc)
+...     if instr.mnemonic == &quot;RET&quot;:
+...         return &quot;break&quot;
+...     return &quot;continue&quot;
+
+&gt;&gt;&gt; emu[&quot;RDI&quot;] = 10
+&gt;&gt;&gt; emu.emulate(hash_function.address, callback=execute_until_ret)
+&gt;&gt;&gt; print(emu[&quot;RAX&quot;])
+113
+</code></pre>
+<p>By the way, as a reminder, you can use a symbol name almost everywhere instead of
+an address. For example, <code>hash_function.address</code> is equivalent to "hash" and you
+can as well do</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu.emulate(&quot;hash&quot;, callback=execute_until_ret)
+</code></pre>
+<p>This is probably not a good idea in serious scripts, but it's a nice trick for
+quick hacks.</p>
+<p><strong>Exercise</strong>: Use your knowledge of the emulator to find a value that will make the
+<code>hash</code> function return 189. Hint: emulate <code>hash</code> in a for loop and check the return value.</p>
+<h3 id="hooks-and-external-functions">Hooks and external functions</h3>
+<p>Another thing we can do with hooks is dealing with <code>calls</code>. For example, <code>check</code>
+function looks like this:</p>
+<pre><code class="language-python">&gt;&gt;&gt; for instr in Function(&quot;check&quot;).instructions:
+...     print(&quot;0x{:x} {}&quot;.format(instr.address, instr))
+... 
+0x401159 PUSH RBP
+0x40115a MOV RBP,RSP
+0x40115d SUB RSP,0x10
+0x401161 MOV dword ptr [RBP + -0x4],EDI
+0x401164 MOV EAX,dword ptr [RBP + -0x4]
+0x401167 MOV EDI,EAX
+0x401169 CALL 0x00401136
+0x40116e CMP EAX,0xbd
+0x401173 JNZ 0x00401189
+0x401175 LEA RAX,[0x402004]
+0x40117c MOV RDI,RAX
+0x40117f MOV EAX,0x0
+0x401184 CALL 0x00401030
+0x401189 NOP
+0x40118a LEAVE
+0x40118b XOR EAX,EAX
+0x40118d XOR EDI,EDI
+0x40118f RET
+</code></pre>
+<p>The first call is to <code>hash</code> function, but the second one is to <code>printf</code>. We can't easily
+emulate this function, because it's outside of the current program. To avoid crashing
+the emulation, we can use the hook to skip the calls:</p>
+<pre><code class="language-python">&gt;&gt;&gt; check_function = Function(&quot;check&quot;)
+&gt;&gt;&gt; def skip_calls(emu):
+...     instr = Instruction(emu.pc)
+...     if instr.mnemonic == &quot;CALL&quot;:
+...         return &quot;skip&quot;
+...     return &quot;continue&quot;
+</code></pre>
+<p>But let's do something else: let's emulate <code>check</code> function until the <code>CALL hash</code> instruction,
+but skip the call and just return <code>189</code> directly. Then emulate until the <code>CALL printf</code> instruction,
+and print the parameter passed to <code>printf</code>. The callback gets more complicated now:</p>
+<pre><code class="language-python">&gt;&gt;&gt; def emulate_check(emu):
+...     instr = Instruction(emu.pc)
+...     if instr.address == 0x401169:
+...         emu[&quot;RAX&quot;] = 189
+...         return &quot;skip&quot;
+...     if instr.address == 0x401184:
+...         string_addr = emu[&quot;RDI&quot;]  # cstring parameter is in RDI (linux ABI)
+...         print(emu.read_cstring(string_addr))
+...         return &quot;break&quot;
+
+&gt;&gt;&gt; check_function = Function(&quot;check&quot;)
+&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; emu.emulate(check_function.address, callback=emulate_check)
+Success!
+</code></pre>
+<p>We successfully "tricked" the check function into executing the "success"
+branch and trying to print the <code>Success!</code> string.</p>
+<p>But this code is not very nice. We can use emulator hooks to make it clearer.
+Hooks are pieces of code that can be automatically executed at certain points
+during emulation. You can register a hook for a specific address:</p>
+<pre><code class="language-python">def printf_hook(emu):
+    arg = emu.read_cstring(emu[&quot;RDI&quot;])
+    print(&quot;printf called with '{}'&quot;.format(arg))
+    return &quot;break&quot;
+
+def hash_hook(emu):
+    emu[&quot;RAX&quot;] = 189
+    emu.pc = emu.read_u64(emu.sp)
+    emu.sp += 8
+
+emu = Emulator()
+emu.add_hook(&quot;printf&quot;, printf_hook)
+emu.add_hook(&quot;hash&quot;, hash_hook)
+emu.emulate(&quot;check&quot;)
+</code></pre>
+<p>Note that we again (ab)use automatic symbol resolution here. The last three lines
+are equivalent to:</p>
+<pre><code class="language-python">emu.add_hook(Symbol(&quot;printf&quot;).address, printf_hook)
+emu.add_hook(Symbol(&quot;hash&quot;).address, hash_hook)
+emu.emulate(Symbol(&quot;check&quot;).address)
+</code></pre>
+<h3 id="state-inspection">State inspection</h3>
+<p>Of course, after emulation we are interested in the final state of the emulator.
+We already showcased reading and writing registers, and we used <code>read_cstring</code> function
+in the hook. There are also other useful functions:</p>
+<ul>
+<li><code>emu.read_register(reg)</code> and <code>emu.write_register(reg, val)</code> - read or write a register</li>
+<li><code>emu[reg]</code> and <code>emu[reg] = val</code> - read or write a register, short version</li>
+<li><code>emu.read_u64(addr)</code> and <code>emu.write_u64(addr, val)</code> - read or write a 64-bit value at a given address</li>
+<li><code>emu.read_u32(addr)</code> and <code>emu.write_u32(addr, val)</code> - read or write a 32-bit value at a given address</li>
+<li><code>emu.read_u16(addr)</code> and <code>emu.write_u16(addr, val)</code> - read or write a 16-bit value at a given address</li>
+<li><code>emu.read_u8(addr)</code> and <code>emu.write_u8(addr, val)</code> - read or write an 8-bit value at a given address</li>
+<li><code>emu.read_bytes(addr, size)</code> - read <code>size</code> bytes from <code>addr</code></li>
+<li><code>emu.write_bytes(addr, bytes)</code> - write the given <code>bytes</code> to <code>addr</code></li>
+<li><code>emu.read_cstring(addr)</code> - read bytes starting from <code>addr</code> until a null byte is found.</li>
+<li><code>emu.read_unicode(addr)</code> - read 16bit chars starting from <code>addr</code> until a null character is found.</li>
+<li><code>emu.read_varnode</code> and <code>emu.write_varnode</code> - read or write a varnode</li>
+</ul>
+<p>They should all be self-explanatory, except the last one. Varnodes are a Ghidra term for an
+almost arbitrary value. In particular, Function signature contains information about how variables and
+parameters map to varnodes:</p>
+<pre><code class="language-python">&gt;&gt;&gt; Function(&quot;hash&quot;).return_variable
+[int &lt;RETURN&gt;@EAX:4]
+&gt;&gt;&gt; Function(&quot;hash&quot;).return_variable.varnode
+(register, 0x0, 4)
+&gt;&gt;&gt; Function(&quot;hash&quot;).parameters
+[[uint param_1@EDI:4]]
+&gt;&gt;&gt; Function(&quot;hash&quot;).parameters[0].varnode
+(register, 0x38, 4)
+</code></pre>
+<p>You can use <code>read_varnode</code> and <code>write_varnode</code> to manipulate these values in a pretty generic way.
+For example, this is levaraged by <code>Function.emulate</code>, to emulate functions in a very generic way:</p>
+<pre><code class="language-python">&gt;&gt;&gt; Function(&quot;hash&quot;).emulate_simple(10)
+113
+</code></pre>
+<p>It doesn't get any easier than that. The <code>simple</code> in the name refers to the return value -
+in many cases you will want to use <code>Function.emulate</code> to get the whole context of the
+emulator after execution.</p>
+<h3 id="misc-features">Misc features</h3>
+<p><strong>maxsteps</strong></p>
+<p>When you emulate a function, you may want to limit the number of steps it can take:</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
+&gt;&gt;&gt; def callback(emu):
+&gt;&gt;&gt;     print(&quot;executing {:x}'.format(emu.pc))
+&gt;&gt;&gt; emu.trace(Function(&quot;main&quot;).entrypoint, callback=callback, maxsteps=3)
+SUB ESP,0x2d4
+PUSH EBX
+PUSH EBP
+</code></pre>
+<p>Especially if you're emulatingh random pieces of code, setting maxsteps
+to something reasonable (like 2000 instructions) may save you from accidentaly
+executing an infinite loops.</p>
+<p><strong>breakpoints</strong></p>
+<p>You can set and remove breakpoints using <code>add_breakpoint</code> and <code>clear_breakpoint</code>
+methods</p>
+<p><strong>emulate_fast</strong></p>
+<p>Ghidra emulator is not very fast, but ghidralib <code>emulate</code> is even slower - because
+we support callbacks, we need to go back and forth between Python and Java.</p>
+<p>To make things faster, you can use the <code>emulate_fast</code> function. It keeps the
+main loop of the emulation in Java, which may matter in some cases.
+The downside is that it doesn't support callbacks or instruction counting -
+you can only emulate until a specific address. As an upside, function hooks
+are supprted.</p>
+<h3 id="learn-more">Learn more</h3>
+<p>Check out relevant examples in the <code>examples</code> directory, especially:</p>
+<ul>
+<li><a href="https://github.com/msm-code/ghidralib/blob/master/examples/EmulatorHooks.py">EmulatorHooks.py</a></li>
+<li><a href="https://github.com/msm-code/ghidralib/blob/master/examples/ContextRecovery.py">ContextRecovery.py</a></li>
+<li><a href="https://github.com/msm-code/ghidralib/blob/master/examples/LummaPatternBasedDeobfuscation.py">LummaPatternBasedDeobfuscation.py</a></li>
+</ul>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../compatibility/" class="btn btn-neutral float-left" title="Compatibility"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../getting_started/" class="btn btn-neutral float-right" title="Getting Started">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../compatibility/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../getting_started/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
