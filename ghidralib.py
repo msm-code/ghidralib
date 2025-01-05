@@ -2308,18 +2308,16 @@ class FunctionCall(BodyTrait):
         """Emulate the code before this function call, and return the state.
 
         The goal of this function is to recover the state of the CPU
-        before the function call, as well as possible. This will work well in case
-        the assembly looks like, for example:
+        before the function call, as well as possible. This will work well when
+        parameters are constants written just before the call, for example:
 
             mov eax, 30
             mov ebx, DAT_encrypted_string
             call decrypt_string
 
-        Then recovering eax them is as simple as call.infer_context()["eax"]."""
+        Then recovering eax is as simple as call.infer_context()["eax"]."""
         basicblock = BasicBlock(self._address)
-        emu = Emulator()
-        emu.emulate(basicblock.start_address, self._address)
-        return emu
+        return Emulator.new(basicblock.start_address, self._address)
 
     @property
     def high_pcodeop(self):  # type: () -> PcodeOp|None
@@ -3593,7 +3591,7 @@ class Emulator(GhidraWrapper):
         return False
 
     @staticmethod
-    def emulate_new(
+    def new(
         start,
         ends=[],
         callback=lambda emu: None,
@@ -3602,8 +3600,20 @@ class Emulator(GhidraWrapper):
     ):  # type: (Addr, Addr|list[Addr], Callable[[Emulator], str|None], Callable[[Emulator], bool], int) -> Emulator
         """Emulate from start to end address, with callback for each executed address.
 
-        This function creates a new emulator, runs emulate on it, and returns it.
-        See emulate documentation for information about the parameters."""
+            >>> Emulator.new("main", maxsteps=100)["EAX"]
+            128
+
+        This function is a convenience wrapper around emulate and can be always
+        replaced by three lines of code. The above is equivalent to:
+
+            >>> emu = Emulator()
+            >>> emu.emulate("main", maxsteps=100)
+            >>> emu["EAX"]
+            128
+
+        This function may be used for quickly doing one-off emulations.
+
+        See `emulate` documentation for info about this method parameters."""
         emu = Emulator()
         emu.emulate(start, ends, callback, stop_when, maxsteps)
         return emu
@@ -3621,7 +3631,7 @@ class Emulator(GhidraWrapper):
             >>> emu = Emulator()
             >>> def callback(emu):
             >>>     print("executing {:x}'.format(emu.pc))
-            >>> emu.trace(Function("main").entrypoint, callback=callback, maxsteps=3)
+            >>> emu.emulate(Function("main").entrypoint, callback=callback, maxsteps=3)
             SUB ESP,0x2d4
             PUSH EBX
             PUSH EBP
@@ -3677,6 +3687,17 @@ class Emulator(GhidraWrapper):
     def is_at_breakpoint(self):  # type: () -> bool
         """Check if the emulator is at a breakpoint"""
         return self.raw.getEmulator().isAtBreakpoint()
+
+    # Basic unicorn compatibility, because why not
+    # You may prefer these aliases if you already know Unicorn API.
+    reg_write = write_register
+    reg_read = read_register
+    mem_write = write_bytes
+    mem_read = read_bytes
+    mem_map = (
+        lambda _1, _2, _3: None
+    )  # This is a noop - all memory is already available.
+    emu_start = lambda self, begin, until: self.emulate(begin, until)
 
 
 class MemoryBlock(GhidraWrapper, BodyTrait):

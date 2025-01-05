@@ -556,11 +556,16 @@ def test_emulator():
     emu = Emulator()
     emu.add_breakpoint(0x403ED0)
     emu.emulate(0x403EC1)
+    assert emu["esi"] == 0xFFFF
     assert emu.pc == 0x403ED0
 
     emu = Emulator()
     assert emu["esi"] == 0
     emu.emulate_fast(0x403ECB, 0x403ED0)
+    assert emu["esi"] == 0xFFFF
+    assert emu.pc == 0x403ED0
+
+    emu = Emulator.new(0x403ECB, 0x403ED0)
     assert emu["esi"] == 0xFFFF
     assert emu.pc == 0x403ED0
 

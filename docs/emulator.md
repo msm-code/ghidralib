@@ -112,8 +112,8 @@ reusable scripts, but `emu["EAX"]` is faster to type when working interactively.
 
 ### Hooks
 
-Often we are very interested in the details of the execution, and we want to
-process every executed instruction. For this we can use the `callback` parameter:
+Often we are interested in the details of the execution, and we want to
+process every instruction in some way. We can easily do this using the `callback` parameter:
 
 ```python
 >>> emu = Emulator()
@@ -349,7 +349,7 @@ Especially if you're emulatingh random pieces of code, setting maxsteps
 to something reasonable (like 2000 instructions) may save you from accidentaly
 executing an infinite loops.
 
-**breakpoints**
+**Breakpoints**
 
 You can set and remove breakpoints using `add_breakpoint` and `clear_breakpoint`
 methods
@@ -364,6 +364,52 @@ main loop of the emulation in Java, which may matter in some cases.
 The downside is that it doesn't support callbacks or instruction counting -
 you can only emulate until a specific address. As an upside, function hooks
 are supprted.
+
+**Emulation shorthands**
+
+To save precious keystrokes you may combine creating an emulator, running it,
+and inspecting the result into one step with:
+
+```python
+>>> Emulator.new("main", maxsteps=100)["EAX"]
+128
+```
+
+This convenience wrapper is equivalent to the following code:
+
+```python
+>>> emu = Emulator()
+>>> emu.emulate("main", maxsteps=100)
+>>> emu["EAX"]
+128
+```
+
+Some other objects also provide helpers to do the obvious thing with emulator.
+For example, you can emulate a function call with:
+
+
+```python
+>>> emu = Function("test").emulate(10)
+>>> emu["EAX"]
+113
+>>> # Or an even shorter version
+>>> Function("test").emulate_simple(10)
+113
+```
+
+**Unicorn compatibility**
+
+There is a very, very thin compatibility layer with Unicorn. There are aliases
+provided for the following Unicorn methods: `reg_write`, `reg_read`, `mem_write`,
+`mem_read`, `mem_map`, `emu_start`. Why? The idea is that many people already
+know Unicorn. It may make it a tiny bit easier for them if they can use familiar
+method names instead of learning a completely new set.
+
+The goal is not to provide actual compatibility layer - Unicorn is a very different
+library and `ghidralib` won't replace it. The only goal is really so Unicorn users
+can use familiar names if they forget ghidralib equivalents. If you are not
+an Unicorn user, don't use them.
+
 
 ### Learn more
 
