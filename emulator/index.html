@@ -123,7 +123,9 @@ void check(int value) {
 }
 
 int main(int argc, char *argv[]) {
+    if (argc != 2) { return 1; }
     check(atoi(argv[1]));
+    return 0;
 }
 </code></pre>
 <p>Compile it with <code>gcc -O0 test.c -o test</code>. Make sure to disable optimisation with
@@ -320,6 +322,9 @@ are equivalent to:</p>
 emu.add_hook(Symbol(&quot;hash&quot;).address, hash_hook)
 emu.emulate(Symbol(&quot;check&quot;).address)
 </code></pre>
+<p><strong>Exercise</strong>: Create a hook for <code>atoi</code> function that will simulate the libc function -
+it should parse the string from the parameter and return it in RAX. Test it by emulating
+the "call atoi" instruction with a string parameter.</p>
 <h3 id="state-inspection">State inspection</h3>
 <p>Of course, after emulation we are interested in the final state of the emulator.
 We already showcased reading and writing registers, and we used <code>read_cstring</code> function
@@ -357,6 +362,9 @@ For example, this is levaraged by <code>Function.emulate</code>, to emulate func
 <p>It doesn't get any easier than that. The <code>simple</code> in the name refers to the return value -
 in many cases you will want to use <code>Function.emulate</code> to get the whole context of the
 emulator after execution.</p>
+<p><strong>Exercise</strong>: Complete the <code>atoi</code> hook from the previous exercise first. Then create an emulator,
+add <code>printf</code> and <code>atoi</code> hooks, and execute a <code>main</code> function with the correct parameters.
+This will require you to pass correct <code>argc</code> and <code>argv</code> parameters.</p>
 <h3 id="misc-features">Misc features</h3>
 <p><strong>maxsteps</strong></p>
 <p>When you emulate a function, you may want to limit the number of steps it can take:</p>
