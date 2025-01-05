@@ -20,10 +20,16 @@ For more details, see the documentation at https://msm-code.github.io/ghidralib/
 """
 
 from abc import abstractmethod
-from ghidra.app.decompiler import DecompInterface
+from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak, ClangTokenGroup as GhClangTokenGroup, DecompInterface
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
 from ghidra.app.util import PseudoDisassembler
 from ghidra.app.util.cparser.C import CParser
+from ghidra.app.emulator import EmulatorHelper
+from ghidra.app.plugin.core.colorizer import ColorizingService
+from ghidra.app.plugin.assembler import Assemblers
+from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
+from ghidra.app.cmd.function import CreateFunctionCmd
+from ghidra.app.util import SearchConstants
 from ghidra.util.task import TaskMonitor
 from ghidra.program.model.symbol import SourceType, RefType as GhRefType
 from ghidra.program.model.pcode import (
@@ -41,17 +47,9 @@ from ghidra.program.model.address import (
     AddressSet as GhAddressSet,
     AddressSpace,
 )
-from ghidra.app.decompiler import ClangTokenGroup as GhClangTokenGroup
-from ghidra.app.decompiler import ClangSyntaxToken, ClangCommentToken, ClangBreak
-from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
-from ghidra.app.emulator import EmulatorHelper
-from ghidra.app.plugin.core.colorizer import ColorizingService
-from ghidra.app.plugin.assembler import Assemblers
-from ghidra.app.cmd.function import CreateFunctionCmd
-from ghidra.app.util import SearchConstants
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
-from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
+from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from java.awt import Color
 from java.util import ArrayList
 from java.math import BigInteger
