@@ -129,7 +129,11 @@ is not implemented.
 ## Learn more
 
 **Check out the [documentation](https://msm-code.github.io/ghidralib/)**, especially the
-[getting started](https://msm-code.github.io/ghidralib/getting_started.html) page.
+[getting started](https://msm-code.github.io/ghidralib/getting_started/) page.
+
+More detailed tutorial about specific features is in development. Completed chapters:
+
+* [Emulator](https://msm-code.github.io/ghidralib/emulator/)
 
 If you prefer to learn by example, tou can also browse the [examples](./examples/) directory.
 
