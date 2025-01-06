@@ -257,6 +257,8 @@ def printf_hook(emu):
     return "break"
 
 def hash_hook(emu):
+    # Note that we are already in the called function, so we need to jump
+    # to return address manually, and update the stack pointer appropriately.
     emu["RAX"] = 189
     emu.pc = emu.read_u64(emu.sp)
     emu.sp += 8
@@ -325,6 +327,12 @@ It doesn't get any easier than that. The `simple` in the name refers to the retu
 in many cases you will want to use `Function.emulate` to get the whole context of the
 emulator after execution.
 
+```python
+>>> emu = Function("hash").emulate(10)
+>>> emu["RAX"]
+113
+```
+
 **Exercise**: Complete the `atoi` hook from the previous exercise first. Then create an emulator,
 add `printf` and `atoi` hooks, and execute a `main` function with the correct parameters.
 This will require you to pass correct `argc` and `argv` parameters.
@@ -338,7 +346,7 @@ When you emulate a function, you may want to limit the number of steps it can ta
 ```python
 >>> emu = Emulator()
 >>> def callback(emu):
->>>     print("executing {:x}'.format(emu.pc))
+>>>     print("executing {:x}".format(emu.pc))
 >>> emu.trace(Function("main").entrypoint, callback=callback, maxsteps=3)
 SUB ESP,0x2d4
 PUSH EBX
