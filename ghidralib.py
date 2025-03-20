@@ -3781,11 +3781,12 @@ class Program(GhidraWrapper):
         :param address: address of the data.
         :param datatype: datatype to use for the data at `address`."""
         typeobj = DataType(datatype)
+        addr = resolve(address)
         try:
-            createData(resolve(address), unwrap(typeobj))
+            createData(addr, unwrap(typeobj))
         except:
-            clearListing(resolve(address))
-            createData(resolve(address), unwrap(typeobj))
+            clearListing(addr, addr.add(len(typeobj) - 1))
+            createData(addr, unwrap(typeobj))
 
     @staticmethod
     def location():  # type: () -> int
