@@ -4322,20 +4322,3 @@ def findall_pattern(byte_pattern):  # type: (str) -> Iterator[int]
         if addr is None:
             break
         yield addr
-
-class Struct(GhidraWrapper):
-    """ Wraps a structure for convenient access by field name """
-
-    def __init__(self, raw):
-        super(Struct, self).__init__(raw)
-        if not self.raw.isStructure():
-            raise ValueError("Not a structure")
-
-    def __getattr__(self, name):
-        for i in range(self.raw.getNumComponents()):
-            field = self.raw.getComponent(i)
-            if field.getFieldName() == name:
-                if field.isStructure():
-                    return Struct(field)
-                return GhidraWrapper(field)
-        raise AttributeError("Field %s does not exist" % name)
