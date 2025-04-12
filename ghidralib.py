@@ -53,7 +53,7 @@ from ghidra.program.model.address import (
     AddressSet as GhAddressSet,
     AddressSpace,
 )
-from ghidra.program.model.listing import ParameterImpl, Function as GhFunction
+from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 from java.awt import Color
@@ -3853,6 +3853,33 @@ class Program(GhidraWrapper):
         Run this when you did changes that you will need to proceed with the rest
         of the script."""
         analyzeChanges(Program.current())
+
+
+class Data(GhidraWrapper):
+    """ Wraps a structure for convenient access by field name """
+
+    @staticmethod
+    def get(addr):  # type: (JavaObject|str|Addr) -> Data|None
+        """Return a Data instance at the given address, or None if there is
+        no Data defined there."""
+        if isinstance(addr, GhData):
+            return Data(addr)
+        addr = try_resolve(addr)
+        if addr is None:
+            return None
+        raw = getDataAt(addr)
+        if raw is None:
+            return None
+        return Data(raw)  # type: ignore
+
+    def __getattr__(self, name):
+        for i in range(self.raw.getNumComponents()):
+            field = self.raw.getComponent(i)
+            if field.getFieldName() == name:
+                if field.isStructure():
+                    return Data(field)
+                return GhidraWrapper(field)
+        raise AttributeError("Field %s does not exist" % name)
 
 
 def disassemble_bytes(
