@@ -1,0 +1,19 @@
+[project]
+name = "ghidralib"
+version = "0.2.0"
+authors = [
+  { name="msm", email="msm@tailcall.net" },
+]
+description = " A Pythonic Ghidra standard library"
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = "MIT"
+license-files = ["LICENCSE.txt"]
+
+[project.urls]
+Homepage = "https://github.com/msm-code/ghidralib"
+Issues = "https://github.com/msm-code/ghidralib/issues"

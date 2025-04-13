@@ -2,3 +2,6 @@
 site/
 shell.nix
 __pycache__
+ghidralib.egg-info
+build/
+dist/

@@ -19,6 +19,14 @@ types, by getting a `.raw` property, for example:
 For more details, see the documentation at https://msm-code.github.io/ghidralib/.
 """
 
+try:
+    import ghidra
+except ImportError:
+    print("This library can be used ONLY in context of a Ghidra SRE tool.")
+    print("You can't use it as a standalone pure python library, it won't work.")
+    print("Visit https://ghidra-sre.org/ to download Ghidra.")
+    exit(1)
+
 from abc import abstractmethod
 from ghidra.app.decompiler import (
     ClangSyntaxToken,
