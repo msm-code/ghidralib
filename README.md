@@ -8,6 +8,12 @@ The main goal is to make writing quick&dirty scripts actually quick, and not tha
 
 ## Installation
 
+**PyGhidra (Python 3, since Ghidra 11.3)**
+
+Activate Ghidra python virtual environment, then `pip install ghidralib`.
+
+**Jython (Python 2, all Ghidra versions)**
+
 Just copy the [ghidralib.py](https://github.com/msm-code/ghidralib/blob/master/ghidralib.py) file to your ghidra_scripts directory.
 Later just `from ghidralib import *`.
 

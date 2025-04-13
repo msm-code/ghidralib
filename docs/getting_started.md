@@ -20,7 +20,15 @@ an IDE that supports type-checking.
 
 ## Installation
 
-To use ghidralib, **just drop [this file](https://github.com/msm-code/ghidralib/blob/master/ghidralib.py) into your ghidra_scripts directory**.
+**PyGhidra (Python 3, since Ghidra 11.3)**
+
+Activate Ghidra python virtual environment, then run `pip install ghidralib`.
+
+Activating the virtual environent is system specific. On my machine I have to run `source ~/.config/ghidra/ghidra_11.3.1_PUBLIC/venv/bin/activate`.
+
+**Jython (Python 2, all Ghidra versions)**
+
+Just **drop [this file](https://github.com/msm-code/ghidralib/blob/master/ghidralib.py) into your ghidra_scripts directory**.
 Click [here](https://raw.githubusercontent.com/msm-code/ghidralib/refs/heads/master/ghidralib.py)
 for a direct download link.
 
