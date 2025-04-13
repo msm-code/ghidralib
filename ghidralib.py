@@ -90,7 +90,6 @@ if sys.version_info.major == 2:
         getMonitor,
         createData,
         clearListing,
-        getReferencesTo,
         getInstructionAt,
         getBytes,
         getState,
@@ -146,7 +145,6 @@ else:
     getState = get_current_interpreter().getState
     createData = get_current_interpreter().createData
     clearListing = get_current_interpreter().clearListing
-    getReferencesTo = get_current_interpreter().getReferencesTo
     getInstructionAt = get_current_interpreter().getInstructionAt
     getBytes = get_current_interpreter().getBytes
     getMonitor = get_current_interpreter().getMonitor
@@ -2637,7 +2635,8 @@ class Function(GhidraWrapper, BodyTrait):
     @property
     def xrefs(self):  # type: () -> list[Reference]
         """Get the references to this function."""
-        raw_refs = getReferencesTo(resolve(self.entrypoint))
+        rm = Program.current().getReferenceManager()
+        raw_refs = rm.getReferencesTo(resolve(self.entrypoint))
         return [Reference(raw) for raw in raw_refs]
 
     xrefs_to = xrefs
