@@ -307,6 +307,8 @@ during emulation. You can register a hook for a specific address:</p>
     return &quot;break&quot;
 
 def hash_hook(emu):
+    # Note that we are already in the called function, so we need to jump
+    # to return address manually, and update the stack pointer appropriately.
     emu[&quot;RAX&quot;] = 189
     emu.pc = emu.read_u64(emu.sp)
     emu.sp += 8
@@ -362,6 +364,10 @@ For example, this is levaraged by <code>Function.emulate</code>, to emulate func
 <p>It doesn't get any easier than that. The <code>simple</code> in the name refers to the return value -
 in many cases you will want to use <code>Function.emulate</code> to get the whole context of the
 emulator after execution.</p>
+<pre><code class="language-python">&gt;&gt;&gt; emu = Function(&quot;hash&quot;).emulate(10)
+&gt;&gt;&gt; emu[&quot;RAX&quot;]
+113
+</code></pre>
 <p><strong>Exercise</strong>: Complete the <code>atoi</code> hook from the previous exercise first. Then create an emulator,
 add <code>printf</code> and <code>atoi</code> hooks, and execute a <code>main</code> function with the correct parameters.
 This will require you to pass correct <code>argc</code> and <code>argv</code> parameters.</p>
@@ -370,7 +376,7 @@ This will require you to pass correct <code>argc</code> and <code>argv</code> pa
 <p>When you emulate a function, you may want to limit the number of steps it can take:</p>
 <pre><code class="language-python">&gt;&gt;&gt; emu = Emulator()
 &gt;&gt;&gt; def callback(emu):
-&gt;&gt;&gt;     print(&quot;executing {:x}'.format(emu.pc))
+&gt;&gt;&gt;     print(&quot;executing {:x}&quot;.format(emu.pc))
 &gt;&gt;&gt; emu.trace(Function(&quot;main&quot;).entrypoint, callback=callback, maxsteps=3)
 SUB ESP,0x2d4
 PUSH EBX
