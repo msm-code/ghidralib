@@ -7,7 +7,6 @@ from ghidralib import *
 
 
 # TODO: Symbol.remove
-# TODO: disassemble_at
 
 
 def b(value):  # (str) -> bytes
@@ -42,6 +41,33 @@ def test_graph():
     assert graph.dfs(1) == {1: None, 2: 1}
     assert graph.bfs(1) == {1: None, 2: 1}
     assert graph.toposort(1) == [2, 1]
+
+    func = Function(0x00403d02)
+    graph = func.control_flow
+    origin = BasicBlock(func.address)
+    assert len(graph.vertices) == graph.vertex_count == len(graph) == 6
+    assert len(graph.edges) == graph.edge_count == 7
+    assert graph.has_vertex(origin) and origin in graph
+
+    block_addresses = [0x403d02, 0x403d11, 0x0403d14, 0x403d22, 0x403d3d, 0x403d40]
+    def validator(block):
+        assert block.address in block_addresses
+
+    parents = graph.bfs(origin, validator)
+    assert parents[origin] == None
+    assert len(parents) == 6
+
+    parents = graph.dfs(origin, validator)
+    assert parents[origin] == None
+    assert len(parents) == 6
+
+    assert len(graph.toposort(origin)) == 6
+
+    dot = graph.to_dot()
+    assert "digraph" in dot
+
+    assert graph.description is not None
+    assert graph.name is not None
 
 
 ###############################################################

@@ -613,6 +613,33 @@ class Graph(GenericT, GhidraWrapper):
         else:
             return vid  # type: ignore graph created outside of ghidralib?
 
+    def __search(
+        self, origin, callback, pop_at
+    ):  # type: (T, Callable[[T], None], int) -> dict[T, T|None]
+        """Internal helper. Performs a BFS or DFS search.
+
+        For usage examples, see documentation of dfs() and bfs(). This function
+        traverses the graph in a specified order, and visits every vertex at most
+        once. A map of parent-child relationships is created.
+        """
+        origin_vid = _get_unique_string(origin)
+        if self.raw.getVertex(origin_vid) is None:
+            raise RuntimeError("{} is not a member of this graph".format(origin_vid))
+        tovisit = [(None, _get_unique_string(origin))]
+        visited = set()
+        parents = {origin: None}  # type: dict[T, T|None]
+        while tovisit:
+            parent, vid = tovisit.pop(pop_at)
+            if vid in visited:
+                continue
+            visited.add(vid)
+            vobj = self.__resolve(vid)
+            parents[vobj] = parent
+            callback(vobj)
+            for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
+                tovisit.append((vobj, self.raw.getEdgeTarget(edge).getId()))
+        return parents
+
     def dfs(
         self, origin, callback=lambda _: None
     ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
@@ -634,20 +661,29 @@ class Graph(GenericT, GhidraWrapper):
         :param callback: A callback function to call for each vertex visited.
         :returns: A dictionary of parent vertices for each visited vertex.
         """
-        tovisit = [(None, _get_unique_string(origin))]
-        visited = set()
-        parents = {origin: None}  # type: dict[T, T|None]
-        while tovisit:
-            parent, vid = tovisit.pop()
-            if vid in visited:
-                continue
-            visited.add(vid)
-            vobj = self.__resolve(vid)
-            parents[vobj] = parent
-            callback(vobj)
-            for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
-                tovisit.append((vobj, self.raw.getEdgeTarget(edge).getId()))
-        return parents
+        return self.__search(origin, callback, -1)
+
+    def bfs(
+        self, origin, callback=lambda _: None
+    ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
+        """Perform a breadth-first search on this graph, starting from the given vertex.
+
+        The callback will be called for each vertex visited when first visited, and
+        the returned value is a dictionary of parent vertices for each visited vertex.
+
+            >>> g = Graph.create()
+            >>> a, b, c = g.vertex("a"), g.vertex("b"), g.vertex("c")
+            >>> g.edge(a, b)
+            >>> g.edge(b, c)
+            >>> g.bfs(a)
+            {'a': None, 'b': 'a', 'c': 'b'}
+
+        Warning: This won't reach every node in the graph, if it's not connected.
+
+        :param origin: The ID of the vertex to start the search from.
+        :param callback: A callback function to call for each vertex visited.
+        """
+        return self.__search(origin, callback, 0)
 
     def toposort(self, origin):  # type: (T) -> list[T]
         """Perform a topological sort on this graph, starting from the given vertex.
@@ -687,41 +723,6 @@ class Graph(GenericT, GhidraWrapper):
             if vid.getId() not in visited:
                 dfs(vid.getId())
         return result
-
-    def bfs(
-        self, origin, callback=lambda _: None
-    ):  # type: (T, Callable[[T], None]) -> dict[T, T|None]
-        """Perform a breadth-first search on this graph, starting from the given vertex.
-
-        The callback will be called for each vertex visited when first visited, and
-        the returned value is a dictionary of parent vertices for each visited vertex.
-
-            >>> g = Graph.create()
-            >>> a, b, c = g.vertex("a"), g.vertex("b"), g.vertex("c")
-            >>> g.edge(a, b)
-            >>> g.edge(b, c)
-            >>> g.bfs(a)
-            {'a': None, 'b': 'a', 'c': 'b'}
-
-        Warning: This won't reach every node in the graph, if it's not connected.
-
-        :param origin: The ID of the vertex to start the search from.
-        :param callback: A callback function to call for each vertex visited.
-        """
-        tovisit = [(None, _get_unique_string(origin))]
-        visited = set()
-        parents = {origin: None}  # type: dict[T, T|None]
-        while tovisit:
-            parent, vid = tovisit.pop(0)
-            if vid in visited:
-                continue
-            visited.add(vid)
-            vobj = self.__resolve(vid)
-            parents[vobj] = parent
-            callback(vobj)
-            for edge in self.raw.edgesOf(self.raw.getVertex(vid)):
-                tovisit.append((vobj, self.raw.getEdgeTarget(edge).getId()))
-        return parents
 
 
 class BodyTrait:
