@@ -61,6 +61,7 @@ from ghidra.program.model.address import (
     AddressSet as GhAddressSet,
     AddressSpace,
 )
+from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
@@ -342,7 +343,7 @@ if TYPE_CHECKING:
     # 3. A string representing a symbol name
     # When returning a value, the address is always returned as an integer.
 
-    Reg = GhRegister | str
+    Reg = JavaObject | str
     # This library accepts one of two things as registers:
     # 1. A Ghidra Register object
     # 2. A string representing a register name
@@ -1708,9 +1709,6 @@ class Instruction(GhidraWrapper, BodyTrait):
 
     def __convert_operand(self, operand):  # type: (JavaObject) -> Operand
         """Convert an operand to a scalar or address."""
-        from ghidra.program.model.address import Address  # type: ignore
-        from ghidra.program.model.scalar import Scalar  # type: ignore
-
         if isinstance(operand, GhRegister):
             return Operand(_python_str(operand.getName()))
         elif isinstance(operand, Address):
@@ -1834,7 +1832,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         targetlist = ArrayList([dest for dest in targets])
         jumpTab = JumpTable(toAddr(self.address), targetlist, True)
         jumpTab.writeOverride(func.raw)
-        CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, getMonitor())
+        func.fixup_body()
 
 
 class AddressRange(GhidraWrapper):
@@ -3274,7 +3272,7 @@ class Emulator(GhidraWrapper):
         :param value: the value to write"""
         self.write_register(reg, value)
 
-    def read_register(self, reg):  # type: (Reg) -> int
+    def read_register(self, reg):  # type: (Reg|int) -> int
         """Read from the register of the emulated program.
 
             >>> emulator.write_register("eax", 1337)
@@ -3880,13 +3878,117 @@ class Data(GhidraWrapper):
             return None
         return Data(raw)  # type: ignore
 
-    def __getattr__(self, name):
+    @property
+    def is_constant(self):  # type: () -> bool
+        """Checks if the data is constant."""
+        return self.raw.isConstant()
+
+    @property
+    def is_writable(self):  # type: () -> bool
+        """Checks if the data is writable."""
+        return self.raw.isWritable()
+
+    @property
+    def is_volatile(self):  # type: () -> bool
+        """Checks if the data is volatile"""
+        return self.raw.isVolatile()
+
+    @property
+    def is_defined(self):  # type: () -> bool
+        """Checks if the data is defined (as opposed to 'undefined' type)."""
+        return self.raw.isDefined()
+
+    @property
+    def is_pointer(self):  # type: () -> bool
+        """Checks if the data represents a pointer."""
+        return self.raw.isPointer()
+
+    @property
+    def is_union(self):  # type: () -> bool
+        """Checks if the data represents an union."""
+        return self.raw.isUnion()
+
+    @property
+    def is_structure(self):  # type: () -> bool
+        """Checks if the data represents a structure."""
+        return self.raw.isStructure()
+
+    @property
+    def is_array(self):  # type: () -> bool
+        """Checks if the data represents an array."""
+        return self.raw.isStructure()
+
+    @property
+    def is_dynamic(self):  # type: () -> bool
+        """Checks if the data is a dynamic DataType."""
+        return self.raw.isStructure()
+
+    @property
+    def data_type(self):  # type: () -> DataType
+        """Gets a DataType representing a type of this data.
+
+        This will return a typedef type, if the type is a typedef. If you
+        want to get the underlying type, use base_data_type."""
+        return DataType(self.raw.getDataType())
+
+    @property
+    def base_data_type(self):  # type: () -> DataType
+        """Gets a DataType representing a type of this data.
+
+        If this data is a typedef, this will return the underlying type."""
+        return DataType(self.raw.getBaseDataType())
+
+    @property
+    def get_field_name(self):  # type: () -> str | None
+        """Return the field name for this field, if it's a member of another data
+        item. Otherwise, return null."""
+        return self.raw.getFieldName()
+
+    @property
+    def get_path_name(self):  # type: () -> str | None
+        """Return the full path name for this field (dot notation), if it's a member
+        of another data item. Otherwise, return null."""
+        return self.raw.getFieldName()
+
+    @property
+    def is_string(self):  # type: () -> bool
+        """Returns true if this data can be cast to string"""
+        return self.raw.hasStringValue()
+
+    has_string_value = is_string
+
+    @property
+    def value(self):  # type: () -> (bytes|int|Data)
+        """Unwrap the underlying Python type, if possible.
+
+        Otherwise (data is a structure) return the current type unchanged."""
+        # TODO: check for string
+        value = self.raw.getValue()
+        if isinstance(value, str):
+            return _asbytes(value)
+        if isinstance(value, bytes):
+            return value
+        if isinstance(self.raw, GenericAddress):
+            return self.raw.getOffset()
+        elif isinstance(self.raw, Scalar):
+            return self.raw.getValue()
+        elif _is_array(self.raw):
+            operands = [self.__convert_operand(o).raw for o in operand]  # type: ignore
+            if len(operands) == 1:
+                # Unwrap the operands if there is only one operand
+                return Operand(operands[0])
+            return Operand(operands)  # type: ignore (we know there are no nested lists)
+        else:
+            return self
+
+    def __getattr__(self, name):  # type: (str) -> Data
+        """Gets a field by name. Returns a Data object.
+
+        If the element is a primitive, use .value to get the underlying type."""
         for i in range(self.raw.getNumComponents()):
             field = self.raw.getComponent(i)
             if field.getFieldName() == name:
-                if field.isStructure():
-                    return Data(field)
-                return GhidraWrapper(field)
+                return Data(field)
         raise AttributeError("Field %s does not exist" % name)
 
 

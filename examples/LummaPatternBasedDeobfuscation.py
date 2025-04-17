@@ -21,31 +21,37 @@
 
 from ghidralib import *
 
-pattern = "8B 04 85 ?? ?? ?? ?? b? ?? ?? ?? ?? 3? ?? ?? ?? ?? ?? 01 ?? 4?"
+pattern = "8B 04 85"
 for addr in findall_pattern(pattern):
     # There may be instructions before the JMP, so let's disassemble next 10 instructions
-    # and find the JMP (to get the register that the JMP jumps to)
+    # and look for the JMP (to get the register that the JMP jumps to)
     for op in disassemble_at(addr, 10):
-        if op.mnemonic == "JMP":
-            jump_to = op.operands[0]
+        if op.mnemonic == "JMP" and op.operands[0].is_register:
+            jump_to = op.operands[0].register
             break
     else:
-        raise RuntimeError("No JMP found")
+        # no JMP found
+        continue
 
     # Emulate what happens if EAX=0
     emu = Emulator()
-    emu.emulate(addr, op.address)
-    iffalse = emu[jump_to]
+    emu["EAX"] = 0                  # Assume EAX=0 (for clarity, this is the default)
+    emu.emulate(addr, op.address)   # Emulate until JMP
+    iffalse = emu[jump_to]          # Target address at JMP if EAX=0
 
-    # Emulate what happens if EAX=1
     emu = Emulator()
-    emu["eax"] = 1
-    emu.emulate(addr, op.address)
-    iftrue = emu[jump_to]
+    emu["EAX"] = 1                  # Assume EAX=1
+    emu.emulate(addr, op.address)   # Emulate until JMP
+    iftrue = emu[jump_to]           # Target address at JMP if EAX=1
 
     # Write the patch (and pad the rest of the block with NOPs)
     assemble_at(addr, [
         "TEST EAX, EAX",
-        "JZ 0x{:x}".format(iffalse),
+        "JZ  0x{:x}".format(iffalse),
         "JMP 0x{:x}".format(iftrue),
     ], pad_to=op.address - addr + 2)
+
+    try:
+        Function(addr).fixup_body()
+    except:
+        pass
