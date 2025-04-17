@@ -61,6 +61,7 @@ from ghidra.program.model.address import (
     AddressSet as GhAddressSet,
     AddressSpace,
 )
+from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
@@ -342,7 +343,7 @@ if TYPE_CHECKING:
     # 3. A string representing a symbol name
     # When returning a value, the address is always returned as an integer.
 
-    Reg = GhRegister | str
+    Reg = JavaObject | str
     # This library accepts one of two things as registers:
     # 1. A Ghidra Register object
     # 2. A string representing a register name
@@ -730,6 +731,9 @@ class BodyTrait:
 
     It provides generic methods that work with anything that has a body
     (an assigned set of addresses in the program), such as highlighting."""
+
+    # TODO: many of the BodyTrait objects are ghidra CodeUnits. It would be
+    # useful to create a parent class for CodeUnits, to save some typing.
 
     @property
     @abstractmethod
@@ -1708,12 +1712,9 @@ class Instruction(GhidraWrapper, BodyTrait):
 
     def __convert_operand(self, operand):  # type: (JavaObject) -> Operand
         """Convert an operand to a scalar or address."""
-        from ghidra.program.model.address import Address  # type: ignore
-        from ghidra.program.model.scalar import Scalar  # type: ignore
-
         if isinstance(operand, GhRegister):
             return Operand(_python_str(operand.getName()))
-        elif isinstance(operand, Address):
+        elif isinstance(operand, GenericAddress):
             return Operand(operand.getOffset())
         elif isinstance(operand, Scalar):
             return Operand(operand.getValue())
@@ -1761,7 +1762,6 @@ class Instruction(GhidraWrapper, BodyTrait):
         For example, for x86 JMP this will return RefType.UNCONDITIONAL_JUMP"""
         return FlowType(self.raw.getFlowType())
 
-    # int opIndex, Address refAddr, RefType type, SourceType sourceType
     def add_operand_reference(
         self, op_ndx, ref_addr, ref_type, src_type=SourceType.USER_DEFINED
     ):  # type: (int, Addr, RefType, SourceType) -> None
@@ -1834,7 +1834,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         targetlist = ArrayList([dest for dest in targets])
         jumpTab = JumpTable(toAddr(self.address), targetlist, True)
         jumpTab.writeOverride(func.raw)
-        CreateFunctionCmd.fixupFunctionBody(Program.current(), func.raw, getMonitor())
+        func.fixup_body()
 
 
 class AddressRange(GhidraWrapper):
@@ -3274,7 +3274,7 @@ class Emulator(GhidraWrapper):
         :param value: the value to write"""
         self.write_register(reg, value)
 
-    def read_register(self, reg):  # type: (Reg) -> int
+    def read_register(self, reg):  # type: (Reg|int) -> int
         """Read from the register of the emulated program.
 
             >>> emulator.write_register("eax", 1337)
@@ -3880,15 +3880,172 @@ class Data(GhidraWrapper):
             return None
         return Data(raw)  # type: ignore
 
-    def __getattr__(self, name):
+    @property
+    def is_constant(self):  # type: () -> bool
+        """Checks if the data is constant."""
+        return self.raw.isConstant()
+
+    @property
+    def is_writable(self):  # type: () -> bool
+        """Checks if the data is writable."""
+        return self.raw.isWritable()
+
+    @property
+    def is_volatile(self):  # type: () -> bool
+        """Checks if the data is volatile"""
+        return self.raw.isVolatile()
+
+    @property
+    def is_defined(self):  # type: () -> bool
+        """Checks if the data is defined (as opposed to 'undefined' type)."""
+        return self.raw.isDefined()
+
+    @property
+    def is_pointer(self):  # type: () -> bool
+        """Checks if the data represents a pointer."""
+        return self.raw.isPointer()
+
+    @property
+    def is_union(self):  # type: () -> bool
+        """Checks if the data represents an union."""
+        return self.raw.isUnion()
+
+    @property
+    def is_structure(self):  # type: () -> bool
+        """Checks if the data represents a structure."""
+        return self.raw.isStructure()
+
+    @property
+    def is_array(self):  # type: () -> bool
+        """Checks if the data represents an array."""
+        return self.raw.isArray()
+
+    @property
+    def is_dynamic(self):  # type: () -> bool
+        """Checks if the data is a dynamic DataType."""
+        return self.raw.isDynamic()
+
+    @property
+    def data_type(self):  # type: () -> DataType
+        """Gets a DataType representing a type of this data.
+
+        This will return a typedef type, if the type is a typedef. If you
+        want to get the underlying type, use base_data_type."""
+        return DataType(self.raw.getDataType())
+
+    @property
+    def base_data_type(self):  # type: () -> DataType
+        """Gets a DataType representing a type of this data.
+
+        If this data is a typedef, this will return the underlying type."""
+        return DataType(self.raw.getBaseDataType())
+
+    @property
+    def get_field_name(self):  # type: () -> str | None
+        """Return the field name for this field, if it's a member of another data
+        item. Otherwise, return null."""
+        return self.raw.getFieldName()
+
+    @property
+    def get_path_name(self):  # type: () -> str | None
+        """Return the full path name for this field (dot notation), if it's a member
+        of another data item. Otherwise, return null."""
+        return self.raw.getPathName()
+
+    @property
+    def is_string(self):  # type: () -> bool
+        """Returns true if this data can be cast to string"""
+        return self.raw.hasStringValue()
+
+    has_string_value = is_string
+
+    @property
+    def raw_value(self):  # type: () -> JavaObject
+        """Get the underlying Ghidra value.
+
+        This may be an unwrapped java object from Ghidra data model,
+        for example, Address, Scalar, Array, unicode string, etc."""
+        return self.raw.getValue()
+
+    def get_value(self, recurse=True):  # type: (bool) -> (str|int|Data|list)
+        """Unwrap the underlying Python type, if possible.
+
+        If recurse=True, arrays are unpacked recursively.
+        Otherwise, arrays will be unpacked as a list of Data objects.
+
+        For structures, return the object unchanged.
+
+        Dynamic types and unions are not supported - use .raw_value instead."""
+        value = self.raw_value
+
+        if isinstance(value, (str, unicode)):
+            return _python_str(value)
+        elif isinstance(value, GenericAddress):
+            return value.getOffset()
+        elif isinstance(value, Scalar):
+            return value.getValue()
+        elif self.is_array:
+            result = []
+            for i in range(self.raw.getNumComponents()):
+                component = Data(self.raw.getComponent(i))
+                if recurse:
+                    component = component.value
+                result.append(component)
+            return result
+        elif self.is_structure:
+            return self
+        else:
+            raise RuntimeError("Dynamic types and unions are not supported.")
+
+    @property
+    def value(self):  # type: () -> (str|int|Data|list)
+        """Unwrap the underlying Python type, if possible.
+
+        For more information, see .get_value()"""
+        return self.get_value()
+
+    def __getitem__(self, ndx):  # type: (int) -> Data
+        """Get N-th element of an array"""
+        if not self.is_array:
+            raise RuntimeError("__getitem__ only makes sense for an array")
+        return Data(self.raw.getComponent(ndx))
+
+    def get_field(self, name):  # type: (str) -> Data
+        """Get a field by name. Returns a Data object.
+
+        Equivalent to just reading class field, but will accept all
+        names (including names that are not valid Python field names"""
+        return self.__getattr__(name)
+
+    def __getattr__(self, name):  # type: (str) -> Data
+        """Get a field by name. Returns a Data object.
+
+        If the element is a primitive, use .value to get the underlying type."""
         for i in range(self.raw.getNumComponents()):
             field = self.raw.getComponent(i)
             if field.getFieldName() == name:
-                if field.isStructure():
-                    return Data(field)
-                return GhidraWrapper(field)
+                return Data(field)
         raise AttributeError("Field %s does not exist" % name)
 
+    @property
+    def address(self):  # type: () -> int
+        """Get the start address of this data."""
+        return self.raw.getAddress().getOffset()
+
+    @property
+    def body(self):  # type: () -> AddressSet
+        """Get the address range of this data."""
+        return AddressSet.create(self.address, self.length)
+
+    @property
+    def bytes(self):  # type: () -> bytes
+        """Get the byte contents of this data."""
+        return _bytes_from_bytelist(self.raw.getBytes())
+
+    @property
+    def length(self):  # type: () -> int
+        """Get the length of this data in bytes."""
+        return self.raw.getLength()
 
 def disassemble_bytes(
     data, addr=0, max_instr=None
