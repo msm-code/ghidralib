@@ -760,6 +760,63 @@ def test_util():
     assert assemble("JMP 0")[0].mnemonic == "JMP"
 
 
+###############################################################
+# Test Data
+###############################################################
+
+
+def test_data():
+    # 004092f4 73 00 65        unicode    u"settings logging to %d"
+    d = Data(0x4092f4)
+    assert d.value == "settings logging to %d"
+    assert d.is_string
+    assert not d.is_constant
+    assert not d.is_writable
+    assert not d.is_volatile
+    assert d.is_defined
+    assert not d.is_pointer
+    assert not d.is_union
+    assert not d.is_structure
+    assert not d.is_array
+    assert not d.is_dynamic
+    assert d.address == 0x4092f4
+    assert d.length == 46
+    assert d.bytes is not None
+    assert d.data_type.name == "unicode"
+
+    # 004092c8 d0 ba 00 00     addr       OLE32.DLL::CoCreateInstance
+    d = Data(0x04092c8)
+    assert d.is_pointer
+    assert d.value == 47824
+    assert d.data_type.name == "pointer"
+
+    # 0040a404 62 00 00 00     undefined4 00000062h
+    d = Data(0x040a404)
+    assert d.value == 98
+    assert d.data_type.name == "undefined4"
+
+    #                          User32Reserved
+    # ffdff044 00 00 00        ddw[26]
+    #      ffdff044 [0] 0h, 0h, 0h, 0h,
+    #      ffdff054 [4] 0h, 0h, 0h, 0h,
+    # ...
+    d = Data(0xffdff044)
+    assert d.is_array
+    assert d.value == [0] * 26
+    assert d[1].value == 0
+    assert d.data_type.name == "dword[26]"
+
+    # IMAGE_DOS_HEADER
+    d = Data(0x400000)
+    assert d.is_structure
+    assert d.value == d
+    assert d.e_lfanew.value == 0xD0
+    assert d.get_field("e_lfanew").value == 0xD0
+    assert d.get_field("e_res2[10]")[0].value == 0x0
+    assert d.e_maxalloc.bytes == b("\xFF\xFF")
+    assert d.data_type.name == "IMAGE_DOS_HEADER"
+
+
 def run():
     print("Running with {}".format(sys.version))
     test_emulator()
