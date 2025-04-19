@@ -395,7 +395,6 @@ This convenience wrapper is equivalent to the following code:
 Some other objects also provide helpers to do the obvious thing with emulator.
 For example, you can emulate a function call with:
 
-
 ```python
 >>> emu = Function("test").emulate(10)
 >>> emu["EAX"]
@@ -417,7 +416,6 @@ The goal is not to provide actual compatibility layer - Unicorn is a very differ
 library and `ghidralib` won't replace it. The only goal is really so Unicorn users
 can use familiar names if they forget ghidralib equivalents. If you are not
 an Unicorn user, don't use them.
-
 
 ### Learn more
 

@@ -374,9 +374,9 @@ I personally use is VS Code with Python extensions. If you install
 VsCode/VsCodium, a Python extension, and just drop ghidralib.py
 in the ghidra_scripts directory, then everything should "just work".
 
-If for some reason your script lives in a different directory than
-ghidralib, override the PYTHONPATH so the typechecker knows how to
-import it:
+If ghidralib is not installed via pip, and your script lives in a
+different directory than ghidralib, override the PYTHONPATH so
+typechecker knows how to import it:
 
 ```json
 {

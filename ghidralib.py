@@ -204,10 +204,10 @@ if TYPE_CHECKING:
 
 
 class JavaObject:
-    """A fake class, used for static type hints."""
+    """A fake class, never instantiated, used only for static type hints."""
 
     def __getattribute__(self, name):  # type: (str) -> Any
-        """This attribute exists to make mypy happy."""
+        """This function exists only to make mypy happy."""
         pass
 
 
@@ -229,7 +229,7 @@ def _python_str(string):  # type: (str|unicode) -> str
     In particular, this will convert unicode objects to normal strings.
     This method only matters for Jython (Python 2) compatibility"""
     if isinstance(string, unicode):
-        # This can only happen for
+        # This can only happen in Jython (Python 2).
         return string.encode()
     return string
 
@@ -254,8 +254,8 @@ class GhidraWrapper(object):
     def __init__(self, raw):  # type: (JavaObject|int|str|GhidraWrapper) -> None
         """Initialize the wrapper.
 
-        This function will try to resolve the given object to a Ghidra object.
-        The algorithm is as follows:
+        This function will try to resolve the given object to a Ghidra object,
+        using a "get" method of the class. The algorithm goes as follows:
 
         * If "raw" is a primitive type (int, long, str, unicode, Address),
           try to resolve it with a static "get" method of the subclass.
@@ -314,7 +314,7 @@ class GhidraWrapper(object):
         return self.raw.__repr__()
 
     def __tojava__(self, klass):
-        """Make it possible to pass this object to Java methods.
+        """Make it possible to pass this object to Java methods transparently.
 
         This only works in Jython, I didn't find a way to do this in JPype yet."""
         return self.raw
@@ -337,29 +337,31 @@ class GhidraWrapper(object):
 # Aliases just for typechecking.
 if TYPE_CHECKING:
     Addr = GenericAddress | int | str
-    # This library accepts one of three things as addressses:
-    # 1. A Ghidra Address object
-    # 2. An integer representing an address
-    # 3. A string representing a symbol name
-    # When returning a value, the address is always returned as an integer.
+    """This library accepts one of three things as addressses:
+    1. A Ghidra Address object
+    2. An integer representing an address
+    3. A string representing a symbol name
+    When returning a value, the address is always returned as an integer."""
 
     Reg = JavaObject | str
-    # This library accepts one of two things as registers:
-    # 1. A Ghidra Register object
-    # 2. A string representing a register name
+    """This library accepts one of two things as registers:
+    1. A Ghidra Register object
+    2. A string representing a register name"""
 
     DataT = GhidraWrapper | JavaObject | str
-    # This library accepts one of two things as a DataType:
-    # 1. A Ghidra DataType object
-    # 2. A string representing a DataType name (will be resolved)
+    """This library accepts one of two things as a DataType:
+    1. A Ghidra DataType object
+    2. A string representing a DataType name (will be resolved)"""
 
 
-# For isinstance checks, so i can forget about this distinction once again
 Str = (str, bytes, unicode)
+"""This define exists for python 2/3 compatibility.
+In most cases we are only interested if the object is string-like,
+and this is used in typechecks like `isinstance(x, Str)`."""
 
 
-# Use this color for highlight by default - it should work with any theme.
 HIGHLIGHT_COLOR = SearchConstants.SEARCH_HIGHLIGHT_COLOR  # type: Color
+"""Default color used highlight - it should work with any theme."""
 
 
 def resolve(addr):  # type: (Addr) -> GenericAddress
@@ -369,14 +371,14 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
 
     1. A Ghidra Address object
     2. An integer representing an address
-    3. A string representing a symbol name
+    3. A string containing a symbol name
 
     This function is responsible from converting the addressable values (`Addr`)
     to Ghidra addresses (`GenericAddress`).
 
         >>> resolve(0x1234)
         0x1234
-        >>> resolve(Symbol("main"))
+        >>> resolve("main")
         0x1234
         >>> resolve(toAddr(0x1234))
         0x1234
@@ -413,8 +415,10 @@ def try_resolve(addr):  # type: (Addr) -> GenericAddress | None
 def can_resolve(addr):  # type: (Addr) -> bool
     """Check if a passed value address can be resolved.
 
-    This is useful for checking if `resolve()` will succeed.
-    See `resolve` documentation for more details."""
+    This is useful for checking if `resolve()` may succeed.
+    See `resolve` documentation for more details.
+    This only checks `addr` type. Resolve may still fail if addr is a string
+    with invalid symbol name, or integer with invalid address offset."""
     return isinstance(addr, (GenericAddress, int, long, unicode, str))
 
 
@@ -3172,6 +3176,12 @@ class DataType(GhidraWrapper):
 
         return new_dt
 
+    def create_at(self, address):  # type: (Addr) -> Data
+        """Create a data of this type at the specified address
+
+        :param address: address where data should be defined"""
+        return Program.create_data(address, self)
+
 
 class Emulator(GhidraWrapper):
     """Wraps a Ghidra EmulatorHelper object."""
@@ -3781,20 +3791,22 @@ class Program(GhidraWrapper):
     """A static class that represents the current program"""
 
     @staticmethod
-    def create_data(address, datatype):  # type: (Addr, DataT) -> None
+    def create_data(address, datatype):  # type: (Addr, DataT) -> Data
         """Force the type of the data defined at the given address to `datatype`.
+        Returns the newly defined data.
 
-        This function will clear the old type if it already has one
+        This function will clear the old type if there already is one there.
 
         :param address: address of the data.
         :param datatype: datatype to use for the data at `address`."""
         typeobj = DataType(datatype)
         addr = resolve(address)
         try:
-            createData(addr, unwrap(typeobj))
+            raw = createData(addr, unwrap(typeobj))
         except:
             clearListing(addr, addr.add(len(typeobj) - 1))
-            createData(addr, unwrap(typeobj))
+            raw = createData(addr, unwrap(typeobj))
+        return Data(raw)
 
     @staticmethod
     def location():  # type: () -> int
@@ -3863,7 +3875,7 @@ class Program(GhidraWrapper):
         analyzeChanges(Program.current())
 
 
-class Data(GhidraWrapper):
+class Data(GhidraWrapper, BodyTrait):
     """ Wraps a structure for convenient access by field name """
 
     @staticmethod
@@ -3975,7 +3987,10 @@ class Data(GhidraWrapper):
 
         For structures, return the object unchanged.
 
-        Dynamic types and unions are not supported - use .raw_value instead."""
+        Dynamic types and unions are not supported - use .raw_value instead.
+
+        :param recurse: If true, recursively unwrap nested types (in arrays).
+        """
         value = self.raw_value
 
         if isinstance(value, (str, unicode)):
@@ -4014,7 +4029,9 @@ class Data(GhidraWrapper):
         """Get a field by name. Returns a Data object.
 
         Equivalent to just reading class field, but will accept all
-        names (including names that are not valid Python field names"""
+        names (including names that are not valid Python field names
+
+        :param name: Name of the field to read."""
         return self.__getattr__(name)
 
     def __getattr__(self, name):  # type: (str) -> Data
@@ -4046,6 +4063,9 @@ class Data(GhidraWrapper):
     def length(self):  # type: () -> int
         """Get the length of this data in bytes."""
         return self.raw.getLength()
+
+    size = length
+
 
 def disassemble_bytes(
     data, addr=0, max_instr=None
