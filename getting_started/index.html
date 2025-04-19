@@ -49,6 +49,10 @@
                 </li>
               </ul>
               <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../data/">Working with global data</a>
+                </li>
+              </ul>
+              <ul>
                 <li class="toctree-l1"><a class="reference internal" href="../emulator/">Emulator</a>
                 </li>
               </ul>
@@ -134,7 +138,11 @@ first steps easier.</li>
 an IDE that supports type-checking.</li>
 </ul>
 <h2 id="installation">Installation</h2>
-<p>To use ghidralib, <strong>just drop <a href="https://github.com/msm-code/ghidralib/blob/master/ghidralib.py">this file</a> into your ghidra_scripts directory</strong>.
+<p><strong>PyGhidra (Python 3, since Ghidra 11.3)</strong></p>
+<p>Activate Ghidra python virtual environment, then run <code>pip install ghidralib</code>.</p>
+<p>Activating the virtual environent is system specific. On my machine I have to run <code>source ~/.config/ghidra/ghidra_11.3.1_PUBLIC/venv/bin/activate</code>.</p>
+<p><strong>Jython (Python 2, all Ghidra versions)</strong></p>
+<p>Just <strong>drop <a href="https://github.com/msm-code/ghidralib/blob/master/ghidralib.py">this file</a> into your ghidra_scripts directory</strong>.
 Click <a href="https://raw.githubusercontent.com/msm-code/ghidralib/refs/heads/master/ghidralib.py">here</a>
 for a direct download link.</p>
 <h2 id="main-actors">Main actors</h2>
@@ -432,9 +440,9 @@ getInstructionBefore(Instruction(0x0669d2a))  # mixup library object
 <p>I personally use is VS Code with Python extensions. If you install
 VsCode/VsCodium, a Python extension, and just drop ghidralib.py
 in the ghidra_scripts directory, then everything should "just work".</p>
-<p>If for some reason your script lives in a different directory than
-ghidralib, override the PYTHONPATH so the typechecker knows how to
-import it:</p>
+<p>If ghidralib is not installed via pip, and your script lives in a
+different directory than ghidralib, override the PYTHONPATH so
+typechecker knows how to import it:</p>
 <pre><code class="language-json">{
     &quot;python.analysis.extraPaths&quot;: [&quot;/home/you/Projects/ghidralib&quot;],
     &quot;terminal.integrated.env.windows&quot;: {

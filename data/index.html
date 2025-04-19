@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Working with global data - Ghidralib</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+        <link href="../assets/_mkdocstrings.css" rel="stylesheet" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Working with global data";
+        var mkdocs_page_input_path = "data.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> Ghidralib
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Ghidralib</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../compatibility/">Compatibility</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Working with global data</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#defining-data">Defining data</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#data-types">Data types</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../emulator/">Emulator</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../getting_started/">Getting Started</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../reference/">API reference</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">Ghidralib</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Working with global data</li>
+    <li class="wy-breadcrumbs-aside">
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="working-with-global-data">Working with global data</h1>
+<p>Globally defined data is the second most important thing a reverse-engineer can find in a binary (the first
+most important is of course the code itself). That's why Ghidralib includes many helpful utilities
+to work with it. Most important Ghidralib wrappers used to work with global data are:</p>
+<ul>
+<li><a href="../reference/#ghidralib.Data">Data</a> - represents a fragment of binary that is used to store a piece of data. Wraps <code>ghidra.program.model.listing.Data</code>.</li>
+<li><a href="../reference/#ghidralib.DataType">DataType</a> - all data objects have an assigned type, that determines many things, including the way it's displayed, decompiled and more. Wraps <code>ghidra.program.model.data.DataType</code>.</li>
+</ul>
+<h3 id="defining-data">Defining data</h3>
+<p>When one runs auto-analysis, large chunks of the program are automatically analysed and marked as code
+or data. But sometimes, during analysis, we discover a new piece of data that was not previously
+defined. We may want to automate adding it. Ghidra's FlatProgramAPI is pretty good here - we
+have a lot of functions like <code>createByte</code>, <code>createChar</code>, <code>createDouble</code>, <code>createDWord</code>, etc.</p>
+<p>But one very annoying problem with them is that they raise an exception when a data is already defined there.
+For example, given:</p>
+<pre><code class="language-asm">00457994 34 32           dw         3234h
+</code></pre>
+<p>When we attempt to:</p>
+<pre><code class="language-python">createByte(toAddr(0x0457994))  # remember that you need toAddr here
+</code></pre>
+<p>We'll get a long exception about conflicting data types. With Ghidralib we can do it
+a bit more safely by leveraging <code>Program.create_data</code>:</p>
+<pre><code class="language-python">data = Program.create_data(0x0457994, &quot;byte&quot;)
+</code></pre>
+<p>Or alternatively, using a DataType object:</p>
+<pre><code class="language-python">data = DataType(&quot;byte&quot;).create_at(0x0457994)
+</code></pre>
+<p>As usual, we can also access the existing defined data:</p>
+<pre><code class="language-python">data = Data(0x0457994)  # Get by address
+data = Data(&quot;DAT_00457994&quot;)  # Get by name, if exists
+</code></pre>
+<p>With a <code>Data</code> instance we can easily access a lot of information, but most importantly we can:</p>
+<ul>
+<li>Access it's address, size, raw bytes, etc</li>
+</ul>
+<pre><code class="language-python">&gt;&gt;&gt; Data(0x0400078).address
+4194424L
+&gt;&gt;&gt; Data(0x0400078).length
+248
+</code></pre>
+<p>As a fun exercise, like with everything that occupies bytes in the binary address space, we
+can also highlight it in the listing:</p>
+<pre><code class="language-python">Data(0x0400078).highlight()s
+</code></pre>
+<ul>
+<li>Get its type with <code>data_type</code> or <code>base_data_type</code>.</li>
+</ul>
+<pre><code class="language-python">&gt;&gt;&gt; Data(0x0457994).data_type
+word
+</code></pre>
+<ul>
+<li>Introspect it, for example <code>is_pointer</code>, <code>is_constant</code>, <code>is_writable</code>, <code>is_array</code>, <code>is_structure</code>, etc.</li>
+</ul>
+<pre><code class="language-python">&gt;&gt;&gt; Data(0x0400078).is_pointer
+False
+&gt;&gt;&gt; Data(0x0400078).is_writable
+False
+</code></pre>
+<ul>
+<li>For primitive types, cast it to a Python type (when it makes sense):</li>
+</ul>
+<pre><code class="language-python">&gt;&gt;&gt; Data(0x0457994).value
+0x3234
+</code></pre>
+<ul>
+<li>For structures, access the nested fields with no boilerplate:</li>
+</ul>
+<pre><code class="language-python">&gt;&gt;&gt; Data(0x0400000).e_magic
+char[2] &quot;MZ&quot;
+&gt;&gt;&gt; Data(0x0400000).e_magic.value
+'MZ'
+&gt;&gt;&gt; Data(0x400078).OptionalHeader.DataDirectory[1].Size
+ddw 8Ch
+</code></pre>
+<h3 id="data-types">Data types</h3>
+<p>Every <code>Data</code> object has a type assigned. Types are represented by a
+<a href="../reference/#ghidralib.DataType">DataType</a> object. It can be used to query information about how
+that data behaves.</p>
+<p>It's possible to get the type by name, or to enumarate all data types:</p>
+<pre><code class="language-python">&gt;&gt;&gt; len(DataType.all())
+110528
+&gt;&gt;&gt; DataType(&quot;IMAGE_OPTIONAL_HEADER32&quot;)
+/PE/IMAGE_OPTIONAL_HEADER32
+pack(disabled)
+Structure IMAGE_OPTIONAL_HEADER32 {
+   0   word   2   Magic   &quot;&quot;
+   2   byte   1   MajorLinkerVersion   &quot;&quot;
+   3   byte   1   MinorLinkerVersion   &quot;&quot;
+...
+</code></pre>
+<p>Currently Ghidralib has a limited support for data type introspetion - it's
+possible to get the type name, size in bytes, and not much more. For more advanced operations,
+it may be necessary to use the raw Java object directly. For example:</p>
+<pre><code class="language-python">&gt;&gt;&gt; DataType(&quot;IMAGE_OPTIONAL_HEADER32&quot;).raw.getPathName()
+u'/PE/IMAGE_OPTIONAL_HEADER32'
+&gt;&gt;&gt; DataType(&quot;IMAGE_OPTIONAL_HEADER32&quot;).raw.getDescription()
+u''
+&gt;&gt;&gt; DataType(&quot;IMAGE_OPTIONAL_HEADER32&quot;).raw.getAlignment()
+1
+</code></pre>
+<p>As usual, in the future missing wrappers may be added.</p>
+<p>One interesting feature is C code parsing, for example:</p>
+<pre><code class="language-python">&gt;&gt;&gt; DataType.from_c('typedef void* HINTERNET;')
+HINTERNET
+&gt;&gt;&gt; DataType.from_c(&quot;struct test { short a; short b; short c;};&quot;)
+pack()
+Structure test {
+0   short   2   a   &quot;&quot;
+2   short   2   b   &quot;&quot;
+4   short   2   c   &quot;&quot;
+}
+Length: 6 Alignment: 2
+</code></pre>
+<p>Adding a data type programatically is sometimes much easier than doing it manually in the structure editor.</p>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../compatibility/" class="btn btn-neutral float-left" title="Compatibility"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../emulator/" class="btn btn-neutral float-right" title="Emulator">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+    
+      <span><a href="../compatibility/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../emulator/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
