@@ -1055,6 +1055,15 @@ class Varnode(GhidraWrapper):
         """Return true if this varnode intersects other"""
         return self.raw.intersects(other.raw)
 
+    @property
+    def lone_descend(self):  # type: () -> PcodeOp | None
+        """If there is only one PCodeOp that takes this varnode as input,
+        return it. Otherwise, return None."""
+        result = self.raw.getLoneDescend()
+        if result is None:
+            return None
+        return PcodeOp(result)
+
 
 class PcodeOp(GhidraWrapper):
     """Pcode is a Ghidra's low-level intermediate language.
@@ -3812,7 +3821,7 @@ class Program(GhidraWrapper):
     def location():  # type: () -> int
         """Get the current location in the program.
 
-            >>> current_location()
+            >>> Program.location()
             0x1000
 
         :return: the current location in the program
