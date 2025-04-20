@@ -1038,7 +1038,9 @@ class Varnode(GhidraWrapper):
 
     @property
     def defining_pcodeop(self):  # type: () -> PcodeOp|None
-        """Return a PcodeOp that defined this varnode"""
+        """Return a PcodeOp that defined this varnode.
+        
+        Wraps getDef, but `def` is not a valid Python name."""
         raw = self.raw.getDef()
         if raw is None:
             return None
@@ -1221,12 +1223,24 @@ def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
 
 class PcodeBlock(GhidraWrapper):
     @property
-    def outgoing_edges(self):  # type: () -> list[PcodeBlock]
+    def out_edges(self):  # type: () -> list[PcodeBlock]
         return [_pcode_node(self.raw.getOut(i)) for i in range(self.raw.getOutSize())]
 
     @property
-    def incoming_edges(self):  # type: () -> list[PcodeBlock]
+    def in_edges(self):  # type: () -> list[PcodeBlock]
         return [_pcode_node(self.raw.getIn(i)) for i in range(self.raw.getInSize())]
+
+    @property
+    def true_out(self):  # type: () -> PcodeBlock
+        """If paths out of this block depend on a boolean condition,
+        returns the PcodeBlock coming if that condition is true."""
+        return PcodeBlock(self.raw.getTrueOut())
+
+    @property
+    def false_out(self):  # type: () -> PcodeBlock
+        """If paths out of this block depend on a boolean condition,
+        returns the PcodeBlock coming if that condition is true."""
+        return PcodeBlock(self.raw.getFalseOut())
 
     @property
     def has_children(self):  # type: () -> bool
@@ -1238,7 +1252,7 @@ class PcodeBlock(GhidraWrapper):
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
-        raw_pcode = collect_iterator(self.raw.getRef().getIterator())
+        raw_pcode = collect_iterator(self.raw.getIterator())
         return [PcodeOp(raw) for raw in raw_pcode]
 
 
@@ -1315,7 +1329,7 @@ class HighFunction(GhidraWrapper):
             edge_map[block.raw] = gb
 
         for block in self.basicblocks:
-            for edge in block.outgoing_edges:
+            for edge in block.out_edges:
                 ingraph.addEdge(edge_map[block.raw], edge_map[edge.raw])
 
         ingraph.setIndices()
