@@ -48,14 +48,12 @@ def get_const_map(high_func, state_var):  # type(HighFunction, Varnode) -> None
         
         last_pcode = block.pcode[-1]
         if last_pcode.opcode != PcodeOp.CBRANCH:
-            print(2)
             continue
 
         condition = last_pcode.inputs[1]
         condition_pcode = condition.defining_pcodeop
         condition_type = condition_pcode.opcode
         if condition_type not in (PcodeOp.INT_NOTEQUAL, PcodeOp.INT_EQUAL):
-            print(3)
             continue
         
         in0, in1 = condition_pcode.inputs
@@ -64,11 +62,9 @@ def get_const_map(high_func, state_var):  # type(HighFunction, Varnode) -> None
         elif in1.is_constant:
             const_var, compared_var = in1, in0
         else:
-            print(4)
             continue
         
         if not is_state_var(state_var, compared_var):
-            print(5)
             continue
 
         if condition_type == PcodeOp.INT_NOTEQUAL:
@@ -77,6 +73,47 @@ def get_const_map(high_func, state_var):  # type(HighFunction, Varnode) -> None
             const_map[const_var.value] = block.true_out
 
     return const_map
+
+
+def generate_cfg(const_map, var_defs):
+    links = []
+
+    for def_block, const in var_defs.items():
+        if len(def_block.outputs) == 1:
+            # Unconditional jump
+            if const in const_map:
+                links.append((def_block, const_map[const]))
+        elif len(def_block.outputs) == 2:
+            # Conditional jumps
+            true_out, false_out = def_block.true_out, def_block.false_out
+            if true_out in var_defs:
+                true_const = var_defs[true_out]
+                if true_const not in const_map:
+                    continue
+                true_block = const_map[true_const]
+
+                #...
+
+                if false_out in state_var_def:
+                    # ...
+                if const not in const_map:
+                    continue
+                false_block = const_map[const]
+
+                # false
+            elif false_out in var_defs
+                false_const = var_defs[false_out]
+                if false_const not in const_map:
+                    continue
+                false_block = const_map[false_const]
+                if const not in const_map:
+                    continue
+                true_block = const_map[const]
+                links.append((def_block, true_block, false_block))
+
+            
+            
+
 
 
 def main():
