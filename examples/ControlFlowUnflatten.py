@@ -1,12 +1,13 @@
-from ghidralib import PcodeOp, Program, HighFunction, Varnode
+from ghidralib import PcodeOp, Program, HighFunction, Varnode, read_u32, read_u64
 
 
-def is_state_var(state_var, var, depth = 0):  # type: (Varnode, Varnode) -> bool
+def is_state_var(state_var, var, depth = 0):  # type: (Varnode, Varnode, int) -> bool
     if depth > 1:
         return False
 
     if var.is_unique:
         var_def = var.defining_pcodeop
+        assert var_def is not None, "Varnode with no associated PcodeOp encountered"
         if var_def.opcode == PcodeOp:
             var = var_def.inputs[0]
         elif var_def.opcode == PcodeOp.MULTIEQUAL:
@@ -75,7 +76,48 @@ def get_const_map(high_func, state_var):  # type(HighFunction, Varnode) -> None
     return const_map
 
 
-def generate_cfg(const_map, var_defs):
+def find_const_def_blocks(var_size, pcode, depth, result, def_block):
+    if depth > 3:
+        return
+    
+    if pcode is None:
+        return
+    
+    if pcode.opcode == PcodeOp.COPY:
+        input_var = pcode.inputs[0]
+        if def_block is None:
+            def_block = pcode.parent
+        if input_var.is_constant:
+            if def_block not in result:
+                result[def_block] = input_var.value
+        elif input_var.is_address:
+            if var_size == 4:
+                ram_value = read_u32(input_var.value)
+                result[def_block] = ram_value
+            elif var_size == 8:
+                ram_value = read_u64(input_var.value)
+                result[def_block] = ram_value
+        else:
+            find_const_def_blocks(var_size, input_var.defining_pcodeop, depth + 1, result, def_block)
+    elif pcode.opcode == PcodeOp.MULTIEQUAL:
+        for input_var in pcode.inputs:
+            find_const_def_blocks(var_size, input_var.defining_pcodeop, depth + 1, result, def_block)
+
+
+def find_var_definitions(var):  # type: (Varnode) -> dict
+    phi = var.defining_pcodeop
+    assert phi is not None, "Variable has no associated PcodeOp"
+    var_defs = {}
+    for var_def in phi.inputs:
+        if var_def == var:
+            continue
+        pcode = var_def.defining_pcodeop
+        find_const_def_blocks(var.size, pcode, 0, var_defs, None)
+
+    return var_defs
+
+
+def generate_control_flow(const_map, var_defs):
     links = []
 
     for def_block, const in var_defs.items():
@@ -111,10 +153,6 @@ def generate_cfg(const_map, var_defs):
                 true_block = const_map[const]
                 links.append((def_block, true_block, false_block))
 
-            
-            
-
-
 
 def main():
     high_func = HighFunction(Program.location())
@@ -122,6 +160,11 @@ def main():
     print(state_var)
     const_map = get_const_map(high_func, state_var)
     print(const_map)
+    state_var_defs = find_var_definitions(state_var)
+    print(state_var_defs)
+    cfg = generate_control_flow(const_map, state_var_defs)
+    print(cfg)
+
 
 
 main()

@@ -1209,6 +1209,11 @@ class PcodeOp(GhidraWrapper):
             return self.inputs[0].value
         return None
 
+    @property
+    def parent(self):  # type: () -> PcodeBlock
+        """Get the PcodeBlock that this operation belongs to."""
+        return _pcode_node(self.raw.getParent())
+
 
 def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
     """Create a BlockGraph or PcodeBlock, depending on arg type
