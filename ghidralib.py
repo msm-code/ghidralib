@@ -262,8 +262,6 @@ class GhidraWrapper(object):
         * If "raw" is a GhidraWrapper, unwrap it (so GhidraWrapper(GhidraWrapper(x))
           is always the same as GhidraWrapper(x).
         * If "raw" is None at this point, raise an exception.
-        * If the subclass has attribute UNDERLYING_CLASS, assert that the wrapped
-          type is of the expected type.
         * Save the final "raw" value."""
 
         if isinstance(raw, (int, long, str, unicode, GenericAddress)):
@@ -284,16 +282,6 @@ class GhidraWrapper(object):
 
         if raw is None:
             raise RuntimeError("Object doesn't exist (refusing to wrap None)")
-
-        # TODO - remove the conditional checks and implement this everywhere
-        if hasattr(self, "UNDERLYING_CLASS"):
-            wrapped_type = getattr(self, "UNDERLYING_CLASS")
-            if not isinstance(raw, wrapped_type):
-                raise RuntimeError(
-                    "You are trying to wrap {} as {}".format(
-                        raw.__class__.__name__, self.__class__.__name__
-                    )
-                )
 
         def _java_cast(raw):  # type: (Any) -> JavaObject
             """This function exists only to make type-checker happy"""
@@ -2462,8 +2450,6 @@ class SymbolicPropogator(GhidraWrapper):
 
 class Function(GhidraWrapper, BodyTrait):
     """Wraps a Ghidra Function object."""
-
-    UNDERLYING_CLASS = GhFunction
 
     @staticmethod
     def get(addr):  # type: (JavaObject|str|Addr) -> Function|None
