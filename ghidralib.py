@@ -1229,11 +1229,31 @@ def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
 class PcodeBlock(GhidraWrapper):
     @property
     def out_edges(self):  # type: () -> list[PcodeBlock]
+        """List of PcodeBlocks that can be reached from this node"""
         return [_pcode_node(self.raw.getOut(i)) for i in range(self.raw.getOutSize())]
 
     @property
     def in_edges(self):  # type: () -> list[PcodeBlock]
+        """List of PcodeBlocks that can reached this node"""
         return [_pcode_node(self.raw.getIn(i)) for i in range(self.raw.getInSize())]
+
+    # These aliases are less clear, but I keep misremembering `out_edges`
+    # and typing `outputs` instead - so maybe it's a more natural name to use?
+    outputs = out_edges
+    inputs = in_edges
+
+    @property
+    def start(self):  # type: () -> int
+        """Returns the first address covered by this block."""
+        return self.raw.getStart().getOffset()
+
+    # For basically every other class we have `address` property with start, so: 
+    address = start
+
+    @property
+    def stop(self):  # type: () -> int
+        """Returns the last address covered by this block."""
+        return self.raw.getStop().getOffset()
 
     @property
     def true_out(self):  # type: () -> PcodeBlock
@@ -1329,7 +1349,7 @@ class HighFunction(GhidraWrapper):
         edge_map = {}
         ingraph = GhBlockGraph()
         for block in self.basicblocks:
-            gb = BlockCopy(block.raw, block.raw.getStart())
+            gb = BlockCopy(block.raw, toAddr(block.start))
             ingraph.addBlock(gb)
             edge_map[block.raw] = gb
 
@@ -1768,6 +1788,14 @@ class Instruction(GhidraWrapper, BodyTrait):
     def address(self):  # type: () -> int
         """Get the address of this instruction."""
         return self.raw.getAddress().getOffset()
+
+    # Alias from Ghidra
+    min_address = address
+
+    @property
+    def max_address(self):  # type: () -> int
+        """Get the last address of this instruction."""
+        return self.raw.getMaxAddress().getOffset()
 
     @property
     def operands(self):  # type: () -> list[Operand]

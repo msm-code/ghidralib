@@ -1,4 +1,4 @@
-from ghidralib import PcodeOp, Program, HighFunction, Varnode, read_u32, read_u64
+from ghidralib import PcodeOp, Program, HighFunction, Varnode, assemble_at, read_u32, read_u64, Instruction, RefType
 
 
 def is_state_var(state_var, var, depth = 0):  # type: (Varnode, Varnode, int) -> bool
@@ -119,7 +119,7 @@ def find_var_definitions(var):  # type: (Varnode) -> dict
 
 def generate_control_flow(const_map, var_defs):
     links = []
-
+    cmovs = []
     for def_block, const in var_defs.items():
         if len(def_block.outputs) == 1:
             # Unconditional jump
@@ -134,16 +134,18 @@ def generate_control_flow(const_map, var_defs):
                     continue
                 true_block = const_map[true_const]
 
-                #...
-
-                if false_out in state_var_def:
-                    # ...
-                if const not in const_map:
+                if false_out in var_defs:
+                    false_const = var_defs[false_out]
+                    if false_const not in const_map:
+                        continue
+                    false_block = const_map[false_const]
+                elif const in const_map:
+                    false_block = const_map[const]
+                else:
                     continue
-                false_block = const_map[const]
-
-                # false
-            elif false_out in var_defs
+                links.append((def_block, true_block, false_block))
+                cmovs.append(true_out)
+            elif false_out in var_defs:
                 false_const = var_defs[false_out]
                 if false_const not in const_map:
                     continue
@@ -152,6 +154,35 @@ def generate_control_flow(const_map, var_defs):
                     continue
                 true_block = const_map[const]
                 links.append((def_block, true_block, false_block))
+    links = [link for link in links if link[0] not in cmovs]
+    return links
+
+
+def patch_x86(cfg):
+    for link in cfg:
+        block, targets = link[0], link[1:]
+        instr = Instruction(block.stop)
+        if len(targets) == 1:
+            target = targets[0].start
+            instr.add_operand_reference(0, target, RefType.JUMP_OVERRIDE_UNCONDITIONAL)
+            for xref in instr.xrefs_from:
+                if xref.reftype == RefType.JUMP_OVERRIDE_UNCONDITIONAL:
+                    Program.current().getReferenceManager().setPrimary(xref.raw, True)
+            # asm = ['JMP 0x{:x}'.format(targets[0].start)]
+            # if len(assemble_to_bytes(asm)) > instr.length:
+            #     print("Instruction is too long")
+            #     continue
+            print("{:x} --> {:x}".format(instr.address, target))
+        elif len(targets) == 2:
+            true_addr, false_addr = targets[0].start, targets[1].start
+            asm = [
+                "{} 0x{:x}".format(instr.mnemonic.replace('CMOV', 'J'), true_addr),
+                "JMP 0x{:x}".format(false_addr),
+            ]
+            print("{:x}: {}".format(instr.address, asm))
+            assemble_at(instr.address, asm)
+        else:
+            raise RuntimeError("Unexpected targets size")
 
 
 def main():
@@ -164,6 +195,7 @@ def main():
     print(state_var_defs)
     cfg = generate_control_flow(const_map, state_var_defs)
     print(cfg)
+    patch_x86(cfg)
 
 
 
