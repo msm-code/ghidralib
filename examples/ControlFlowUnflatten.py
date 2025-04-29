@@ -1,86 +1,69 @@
-from ghidralib import PcodeOp, Program, HighFunction, Varnode, assemble_at, read_u32, read_u64, Instruction, RefType
+from ghidralib import PcodeOp, Program, HighFunction, Varnode, assemble_at, read_u32, read_u64, Instruction, RefType, PcodeBlock
 
 
-def is_state_var(state_var, var, depth = 0):  # type: (Varnode, Varnode, int) -> bool
+def is_assigned_from(target, source, depth = 0):  # type: (Varnode, Varnode, int) -> bool
+    """Check if target is assigned from source, directly or via MULTIEQUAL operation"""
     if depth > 1:
         return False
 
-    if var.is_unique:
-        var_def = var.defining_pcodeop
-        assert var_def is not None, "Varnode with no associated PcodeOp encountered"
-        if var_def.opcode == PcodeOp:
-            var = var_def.inputs[0]
-        elif var_def.opcode == PcodeOp.MULTIEQUAL:
-            for input_var in var_def.inputs:
-                if is_state_var(state_var, input_var, depth + 1):
-                    return True
-    
-    return state_var == var
+    if source.is_unique:
+        source_op = source.defining_op
+        if source_op.opcode == PcodeOp.COPY:
+            source = source_op.inputs[0]
+        elif source_op.opcode == PcodeOp.MULTIEQUAL:
+            for input_var in source_op.inputs:
+                return is_assigned_from(target, input_var, depth + 1)
+
+    return target == source
 
 
 def find_state_var(high_func, addr):  # type: (HighFunction, int) -> Varnode
+    """Find a Varnode that is used to dispatch the control flow in the function"""
     op = None
     for op in high_func.get_pcode_at(addr):
         if op.opcode == PcodeOp.COPY and op.inputs[0].is_constant:
             break
 
-    assert op is not None, "Can't find a COPY at the current address"
+    if op is None or op.output is None:
+        raise RuntimeError("Can't find a COPY at the current address")
+
     depth = 0
-    while op is not None and op.opcode != PcodeOp.MULTIEQUAL:
-        assert op.output is not None, "Opcode output is None"
+    while op.opcode != PcodeOp.MULTIEQUAL:
         op = op.output.lone_descend
         depth += 1
-        if depth >= 10:
-            break
-    
-    assert op is not None and op.opcode == PcodeOp.MULTIEQUAL, "Can't find Phi node"
+        if op is None or op.output is None or depth >= 10:
+            raise RuntimeError("Can't find a Phi node")
 
-    state_var = op.output
-    assert state_var is not None, "Phi node with no output"
-    return state_var
+    return op.output
 
 
-def get_const_map(high_func, state_var):  # type(HighFunction, Varnode) -> None
+def get_const_map(high_func, state_var):  # type: (HighFunction, Varnode) -> dict[int, PcodeBlock]
+    """Construct a map of [constant] -> [pcode block that it leads to]"""
     const_map = {}
-
     for block in high_func.basicblocks:
-        if len(block.out_edges) != 2:
-            continue
-        
         last_pcode = block.pcode[-1]
-        if last_pcode.opcode != PcodeOp.CBRANCH:
-            continue
+        if len(block.out_edges) == 2 and last_pcode.opcode == PcodeOp.CBRANCH:
+            condition = last_pcode.inputs[1].defining_op
 
-        condition = last_pcode.inputs[1]
-        condition_pcode = condition.defining_pcodeop
-        condition_type = condition_pcode.opcode
-        if condition_type not in (PcodeOp.INT_NOTEQUAL, PcodeOp.INT_EQUAL):
-            continue
-        
-        in0, in1 = condition_pcode.inputs
-        if in0.is_constant:
-            const_var, compared_var = in0, in1
-        elif in1.is_constant:
-            const_var, compared_var = in1, in0
-        else:
-            continue
-        
-        if not is_state_var(state_var, compared_var):
-            continue
+            in0, in1 = condition.inputs
+            if in0.is_constant:
+                const_var, compared_var = in0, in1
+            elif in1.is_constant:
+                const_var, compared_var = in1, in0
+            else:
+                continue
 
-        if condition_type == PcodeOp.INT_NOTEQUAL:
-            const_map[const_var.value] = block.false_out
-        else:
-            const_map[const_var.value] = block.true_out
+            if is_assigned_from(state_var, compared_var):
+                if condition.opcode == PcodeOp.INT_NOTEQUAL:
+                    const_map[const_var.value] = block.false_out
+                elif condition.opcode == PcodeOp.INT_NOTEQUAL:
+                    const_map[const_var.value] = block.true_out
 
     return const_map
 
 
-def find_const_def_blocks(var_size, pcode, depth, result, def_block):
+def find_const_def_blocks(var_size, pcode, depth, result, def_block):  # type: (int, PcodeOp, int, dict[PcodeBlock, int], PcodeBlock|None) -> None
     if depth > 3:
-        return
-    
-    if pcode is None:
         return
     
     if pcode.opcode == PcodeOp.COPY:
@@ -89,6 +72,7 @@ def find_const_def_blocks(var_size, pcode, depth, result, def_block):
             def_block = pcode.parent
         if input_var.is_constant:
             if def_block not in result:
+                assert input_var.value is not None
                 result[def_block] = input_var.value
         elif input_var.is_address:
             if var_size == 4:
@@ -98,26 +82,24 @@ def find_const_def_blocks(var_size, pcode, depth, result, def_block):
                 ram_value = read_u64(input_var.value)
                 result[def_block] = ram_value
         else:
-            find_const_def_blocks(var_size, input_var.defining_pcodeop, depth + 1, result, def_block)
+            find_const_def_blocks(var_size, input_var.defining_op, depth + 1, result, def_block)
     elif pcode.opcode == PcodeOp.MULTIEQUAL:
         for input_var in pcode.inputs:
-            find_const_def_blocks(var_size, input_var.defining_pcodeop, depth + 1, result, def_block)
+            find_const_def_blocks(var_size, input_var.defining_op, depth + 1, result, def_block)
 
 
-def find_var_definitions(var):  # type: (Varnode) -> dict
-    phi = var.defining_pcodeop
-    assert phi is not None, "Variable has no associated PcodeOp"
+def find_var_definitions(var):  # type: (Varnode) -> dict[PcodeBlock, int]
+    phi = var.defining_op
     var_defs = {}
     for var_def in phi.inputs:
         if var_def == var:
             continue
-        pcode = var_def.defining_pcodeop
-        find_const_def_blocks(var.size, pcode, 0, var_defs, None)
+        find_const_def_blocks(var.size, var_def.defining_op, 0, var_defs, None)
 
     return var_defs
 
 
-def generate_control_flow(const_map, var_defs):
+def generate_control_flow(const_map, var_defs):  # type: (dict[int, PcodeBlock], dict[PcodeBlock, int]) -> list
     links = []
     cmovs = []
     for def_block, const in var_defs.items():
@@ -154,8 +136,8 @@ def generate_control_flow(const_map, var_defs):
                     continue
                 true_block = const_map[const]
                 links.append((def_block, true_block, false_block))
-    links = [link for link in links if link[0] not in cmovs]
-    return links
+
+    return [link for link in links if link[0] not in cmovs]
 
 
 def patch_x86(cfg):
@@ -167,22 +149,16 @@ def patch_x86(cfg):
             instr.add_operand_reference(0, target, RefType.JUMP_OVERRIDE_UNCONDITIONAL)
             for xref in instr.xrefs_from:
                 if xref.reftype == RefType.JUMP_OVERRIDE_UNCONDITIONAL:
-                    Program.current().getReferenceManager().setPrimary(xref.raw, True)
-            # asm = ['JMP 0x{:x}'.format(targets[0].start)]
-            # if len(assemble_to_bytes(asm)) > instr.length:
-            #     print("Instruction is too long")
-            #     continue
+                    xref.set_primary()
             print("{:x} --> {:x}".format(instr.address, target))
-        elif len(targets) == 2:
+        if len(targets) == 2:
             true_addr, false_addr = targets[0].start, targets[1].start
             asm = [
                 "{} 0x{:x}".format(instr.mnemonic.replace('CMOV', 'J'), true_addr),
                 "JMP 0x{:x}".format(false_addr),
             ]
-            print("{:x}: {}".format(instr.address, asm))
             assemble_at(instr.address, asm)
-        else:
-            raise RuntimeError("Unexpected targets size")
+            print("{:x}: {}".format(instr.address, asm))
 
 
 def main():

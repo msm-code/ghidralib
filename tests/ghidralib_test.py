@@ -153,7 +153,7 @@ def test_varnode():
     _ = vn.is_addr_tied
     _ = vn.is_input
     _ = vn.is_free
-    # _ = vn.defining_pcodeop
+    # _ = vn.defining_op
     _ = vn.descendants
 
     assert isinstance(vn.simple, (str, unicode, int))

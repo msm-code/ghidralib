@@ -338,7 +338,7 @@ class GhidraWrapper(object):
 if TYPE_CHECKING:
     Addr = GenericAddress | int | str
     """This library accepts one of three things as addressses:
-    1. A Ghidra Address object
+    1. A Ghidra GenericAddress object
     2. An integer representing an address
     3. A string representing a symbol name
     When returning a value, the address is always returned as an integer."""
@@ -910,9 +910,9 @@ class Varnode(GhidraWrapper):
         """Get the value of this varnode. Traverse defining pcodeops if necessary."""
         if self.is_address or self.is_constant:
             return self.offset
-        if self.defining_pcodeop is None:
+        if self.defining_op is None:
             return None
-        return self.defining_pcodeop.result
+        return self.defining_op.result
 
     @property
     def offset(self):  # type: () -> int
@@ -1037,14 +1037,32 @@ class Varnode(GhidraWrapper):
         return self.raw.isFree()
 
     @property
-    def defining_pcodeop(self):  # type: () -> PcodeOp|None
-        """Return a PcodeOp that defined this varnode.
+    def maybe_defining_op(self):  # type: () -> PcodeOp|None
+        """Return a PcodeOp that defined this varnode, or None for free Varnodes.
+
+        VarnodeAST (from PcodeOpAST from HighFunctions) are guaranteed
+        to return a non-null PcodeOp.
         
         Wraps getDef, but `def` is not a valid Python name."""
         raw = self.raw.getDef()
         if raw is None:
             return None
         return PcodeOp(raw)
+
+    @property
+    def defining_op(self):  # type: () -> PcodeOp
+        """Return a PcodeOp that defined this varnode, or raises an exception.
+
+        VarnodeAST (from PcodeOpAST from HighFunctions) are guaranteed to have it.
+
+        If you don't want an exception on failure, use maybe_defining_op. I think in
+        99% of cases programmer knows they're dealing with high pcode, and this works.
+
+        Wraps getDef, but `def` is not a valid Python name."""
+        op = self.maybe_defining_op
+        if op is None:
+            raise RuntimeError("This varnode has no defining PcodeOp")
+        return op
 
     @property
     def descendants(self):  # type: () -> list[PcodeOp]
@@ -1421,7 +1439,12 @@ class Reference(GhidraWrapper):
 
     @property
     def source(self):  # type: () -> SourceType
+        """Return a source type for this reference."""
         return SourceType(self.raw.getSource())
+
+    def set_primary(self):  # type: () -> None
+        """Set this reference as primary reference"""
+        Program.current().getReferenceManager().setPrimary(self.raw, True)
 
 
 def _reftype_placeholder():  # type: () -> RefType
