@@ -1,3 +1,6 @@
+# Poc/alpha quality
+
+
 from ghidralib import PcodeOp, Program, HighFunction, Varnode, assemble_at, read_u32, read_u64, Instruction, RefType, PcodeBlock
 
 
@@ -56,7 +59,7 @@ def get_const_map(high_func, state_var):  # type: (HighFunction, Varnode) -> dic
             if is_assigned_from(state_var, compared_var):
                 if condition.opcode == PcodeOp.INT_NOTEQUAL:
                     const_map[const_var.value] = block.false_out
-                elif condition.opcode == PcodeOp.INT_NOTEQUAL:
+                elif condition.opcode == PcodeOp.INT_EQUAL:
                     const_map[const_var.value] = block.true_out
 
     return const_map
@@ -81,7 +84,7 @@ def find_const_def_blocks(var_size, pcode, depth, result, def_block):  # type: (
             elif var_size == 8:
                 ram_value = read_u64(input_var.value)
                 result[def_block] = ram_value
-        else:
+        elif input_var.maybe_defining_op is not None:
             find_const_def_blocks(var_size, input_var.defining_op, depth + 1, result, def_block)
     elif pcode.opcode == PcodeOp.MULTIEQUAL:
         for input_var in pcode.inputs:
@@ -92,9 +95,8 @@ def find_var_definitions(var):  # type: (Varnode) -> dict[PcodeBlock, int]
     phi = var.defining_op
     var_defs = {}
     for var_def in phi.inputs:
-        if var_def == var:
-            continue
-        find_const_def_blocks(var.size, var_def.defining_op, 0, var_defs, None)
+        if var_def != var:
+            find_const_def_blocks(var.size, var_def.defining_op, 0, var_defs, None)
 
     return var_defs
 
@@ -146,10 +148,12 @@ def patch_x86(cfg):
         instr = Instruction(block.stop)
         if len(targets) == 1:
             target = targets[0].start
-            instr.add_operand_reference(0, target, RefType.JUMP_OVERRIDE_UNCONDITIONAL)
-            for xref in instr.xrefs_from:
-                if xref.reftype == RefType.JUMP_OVERRIDE_UNCONDITIONAL:
-                    xref.set_primary()
+            assemble_at(instr.address, ["JMP 0x{:x}".format(target)])
+            # # Alternative method: very compact, but relies on Metadata.
+            # instr.add_operand_reference(0, target, RefType.JUMP_OVERRIDE_UNCONDITIONAL)
+            # for xref in instr.xrefs_from:
+            #     if xref.reftype == RefType.JUMP_OVERRIDE_UNCONDITIONAL:
+            #         xref.set_primary()
             print("{:x} --> {:x}".format(instr.address, target))
         if len(targets) == 2:
             true_addr, false_addr = targets[0].start, targets[1].start
@@ -164,13 +168,17 @@ def patch_x86(cfg):
 def main():
     high_func = HighFunction(Program.location())
     state_var = find_state_var(high_func, Program.location())
-    print(state_var)
+    print("State var", state_var, state_var.symbol.name)
+
     const_map = get_const_map(high_func, state_var)
-    print(const_map)
+    print("Const map", const_map)
+
     state_var_defs = find_var_definitions(state_var)
-    print(state_var_defs)
+    print("State var defs", state_var_defs)
+
     cfg = generate_control_flow(const_map, state_var_defs)
-    print(cfg)
+    print("CFG", cfg)
+
     patch_x86(cfg)
 
 
