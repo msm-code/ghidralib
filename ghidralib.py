@@ -36,12 +36,13 @@ from ghidra.app.decompiler import (
 )
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
 from ghidra.app.util import PseudoDisassembler, SearchConstants
+from ghidra.app.util.parser import FunctionSignatureParser
 from ghidra.app.util.cparser.C import CParser
 from ghidra.app.emulator import EmulatorHelper
 from ghidra.app.plugin.core.colorizer import ColorizingService
 from ghidra.app.plugin.assembler import Assemblers
 from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
-from ghidra.app.cmd.function import CreateFunctionCmd
+from ghidra.app.cmd.function import CreateFunctionCmd, ApplyFunctionSignatureCmd
 from ghidra.util.task import TaskMonitor
 from ghidra.program.model.symbol import SourceType, RefType as GhRefType
 from ghidra.program.model.pcode import (
@@ -61,6 +62,7 @@ from ghidra.program.model.address import (
 )
 from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
+from ghidra.program.model.data import FunctionDefinitionDataType, ParameterDefinitionImpl
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 
@@ -101,6 +103,7 @@ if sys.version_info.major == 2:
         disassemble,
         analyzeChanges,
         setBytes,
+        runCommand,
     )
 
     # Python2 specific type definitions
@@ -155,6 +158,7 @@ else:
     disassemble = get_current_interpreter().disassemble
     analyzeChanges = get_current_interpreter().analyzeChanges
     setBytes = get_current_interpreter().setBytes
+    runCommand = get_current_interpreter().runCommand
 
     # Python3 specific type definitions
     # The goal is to support both languages with a single codebase
@@ -2654,6 +2658,57 @@ class Function(GhidraWrapper, BodyTrait):
         data = DataType(datatype)
         param = ParameterImpl(name, data.raw, reg.raw, Program.current())
         self.raw.addParameter(param, SourceType.USER_DEFINED)
+
+    def set_signature(
+        self, signature
+    ):  # type: (str) -> bool
+        """Change the signature of this function based on the C-like signature
+        as a string.
+
+        Note: even if the function's name does not match the function name in
+        the supplied signature, the function name will not change.
+
+        Returns whether the signature change was successful."""
+
+        # 'service' is None to only use types in the current program's data type
+        # manager
+        parser = FunctionSignatureParser(
+            Program.current().getDataTypeManager(),
+            None
+        )
+
+        # 'originalSignature' is None to replace the signature
+        sig = parser.parse(None, signature)
+
+        return runCommand(ApplyFunctionSignatureCmd(
+            resolve(self.entrypoint),
+            sig,
+            SourceType.USER_DEFINED
+        ))
+
+    def set_signature_detail(
+        self, ret, args
+    ):  # type: (DataType | DataT, list[tuple[DataType | DataT, str]]) -> bool
+        """Change the signature of this function based on a return data type and
+        a list of argument types and names.
+
+        If an argument has an empty string as name, a name will automatically
+        be assigned (like 'param_1', 'param_2', etc.).
+
+        Returns whether the signature change was successful."""
+        # Use 'x' as function definition name - seems to have no effect
+        sig = FunctionDefinitionDataType('x')
+        sig.setReturnType(DataType(ret).raw)
+        sig.setArguments([
+            ParameterDefinitionImpl(name, DataType(ty).raw, '')  # empty comment
+            for ty, name in args
+        ])
+
+        return runCommand(ApplyFunctionSignatureCmd(
+            resolve(self.entrypoint),
+            sig,
+            SourceType.USER_DEFINED
+        ))
 
     def fixup_body(self):  # type: () -> bool
         """Fixup the function body: follow control flow and add thunks."""
