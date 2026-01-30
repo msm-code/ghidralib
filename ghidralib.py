@@ -3,7 +3,7 @@ This library is an attempt to provide a Pythonic standard library for Ghidra.
 
 The main goal is to make writing quick&dirty scripts actually quick, and not that dirty.
 
-There is no equivalent of FlatProgramAPI from GHidra. You are expected to start
+There is no equivalent of FlatProgramAPI from Ghidra. You are expected to start
 by getting an object of interest by calling instance methods, for example
 
     >>> Function("main")
@@ -27,7 +27,6 @@ except ImportError:
     print("Visit https://ghidra-sre.org/ to download Ghidra.")
     exit(1)
 
-from abc import abstractmethod
 from ghidra.app.decompiler import (
     ClangSyntaxToken,
     ClangCommentToken,
@@ -36,14 +35,13 @@ from ghidra.app.decompiler import (
     DecompInterface,
 )
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
-from ghidra.app.util import PseudoDisassembler
+from ghidra.app.util import PseudoDisassembler, SearchConstants
 from ghidra.app.util.cparser.C import CParser
 from ghidra.app.emulator import EmulatorHelper
 from ghidra.app.plugin.core.colorizer import ColorizingService
 from ghidra.app.plugin.assembler import Assemblers
 from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
 from ghidra.app.cmd.function import CreateFunctionCmd
-from ghidra.app.util import SearchConstants
 from ghidra.util.task import TaskMonitor
 from ghidra.program.model.symbol import SourceType, RefType as GhRefType
 from ghidra.program.model.pcode import (
@@ -65,10 +63,13 @@ from ghidra.program.model.scalar import Scalar
 from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
 from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
+
 from java.awt import Color
 from java.util import ArrayList
 from java.math import BigInteger
+
 import sys
+from abc import abstractmethod
 
 
 __version__ = "0.2.0"
@@ -1030,7 +1031,7 @@ class Varnode(GhidraWrapper):
 
         VarnodeAST (from PcodeOpAST from HighFunctions) are guaranteed
         to return a non-null PcodeOp.
-        
+
         Wraps getDef, but `def` is not a valid Python name."""
         raw = self.raw.getDef()
         if raw is None:
@@ -1253,7 +1254,7 @@ class PcodeBlock(GhidraWrapper):
         """Returns the first address covered by this block."""
         return self.raw.getStart().getOffset()
 
-    # For basically every other class we have `address` property with start, so: 
+    # For basically every other class we have `address` property with start, so:
     address = start
 
     @property
