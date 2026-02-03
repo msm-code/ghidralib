@@ -2665,8 +2665,14 @@ class Function(GhidraWrapper, BodyTrait):
         """Change the signature of this function based on the C-like signature
         as a string.
 
-        Note: even if the function's name does not match the function name in
-        the supplied signature, the function name will not change.
+        Note: The function name in the supplied signature is only applied if the
+        function does not yet have a user-defined name. Otherwise, the function
+        name will not change. This issue in Ghidra is tracked here:
+        https://github.com/NationalSecurityAgency/ghidra/issues/8930
+
+            >>> ghidralib.Function('main').set_signature(
+            >>>     'int main(int argc, char ** argv, char ** envp)'
+            >>> )
 
         Returns whether the signature change was successful."""
 
@@ -2695,9 +2701,14 @@ class Function(GhidraWrapper, BodyTrait):
         If an argument has an empty string as name, a name will automatically
         be assigned (like 'param_1', 'param_2', etc.).
 
+            >>> ghidralib.Function('main').set_signature_detail('int', [
+            >>>     ('int', 'argc'),
+            >>>     ('char **', 'argv'),
+            >>>     ('char **', 'envp'),
+            >>> ])
+
         Returns whether the signature change was successful."""
-        # Use 'x' as function definition name - seems to have no effect
-        sig = FunctionDefinitionDataType('x')
+        sig = FunctionDefinitionDataType(self.name)
         sig.setReturnType(DataType(ret).raw)
         sig.setArguments([
             ParameterDefinitionImpl(name, DataType(ty).raw, '')  # empty comment
