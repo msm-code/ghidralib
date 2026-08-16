@@ -79,9 +79,11 @@ def find_const_def_blocks(var_size, pcode, depth, result, def_block):  # type: (
                 result[def_block] = input_var.value
         elif input_var.is_address:
             if var_size == 4:
+                assert input_var.value is not None
                 ram_value = read_u32(input_var.value)
                 result[def_block] = ram_value
             elif var_size == 8:
+                assert input_var.value is not None
                 ram_value = read_u64(input_var.value)
                 result[def_block] = ram_value
         elif input_var.maybe_defining_op is not None:

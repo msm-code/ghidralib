@@ -28,10 +28,12 @@ except ImportError:
     exit(1)
 
 from ghidra.app.decompiler import (
-    ClangSyntaxToken,
-    ClangCommentToken,
     ClangBreak,
+    ClangCommentToken,
+    ClangNode,
+    ClangSyntaxToken,
     ClangTokenGroup as GhClangTokenGroup,
+    DecompileResults,
     DecompInterface,
 )
 from ghidra.app.services import DataTypeManagerService, GraphDisplayBroker
@@ -44,28 +46,56 @@ from ghidra.app.plugin.assembler import Assemblers
 from ghidra.app.plugin.core.analysis import ConstantPropagationContextEvaluator
 from ghidra.app.cmd.function import CreateFunctionCmd, ApplyFunctionSignatureCmd
 from ghidra.util.task import TaskMonitor
-from ghidra.program.model.symbol import SourceType, RefType as GhRefType
+from ghidra.program.model.symbol import (
+    Reference as GhReference,
+    RefType as GhRefType,
+    SourceType,
+    Symbol as GhSymbol,
+)
 from ghidra.program.model.pcode import (
-    HighFunctionDBUtil,
-    Varnode as GhVarnode,
-    BlockGraph as GhBlockGraph,
     BlockCopy,
+    BlockGraph as GhBlockGraph,
     HighFunction as GhHighFunction,
+    HighFunctionDBUtil,
+    HighSymbol as GhHighSymbol,
+    HighVariable as GhHighVariable,
     JumpTable,
+    PcodeBlock as GhPcodeBlock,
+    PcodeOp as GhPcodeOp,
+    Varnode as GhVarnode,
 )
 from ghidra.program.model.lang import Register as GhRegister
-from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel
+from ghidra.program.model.block import BasicBlockModel, SimpleBlockModel, CodeBlock
 from ghidra.program.model.address import (
-    GenericAddress,
+    Address as GhAddress,
+    AddressRange as GhAddressRange,
     AddressSet as GhAddressSet,
+    AddressSetView as GhAddressSetView,
     AddressSpace,
 )
 from ghidra.program.model.scalar import Scalar
-from ghidra.program.model.listing import ParameterImpl, Function as GhFunction, Data as GhData
-from ghidra.program.model.data import FunctionDefinitionDataType, ParameterDefinitionImpl
-from ghidra.program.util import SymbolicPropogator as GhSymbolicPropogator
+from ghidra.program.model.listing import (
+    Data as GhData,
+    Function as GhFunction,
+    Instruction as GhInstruction,
+    Parameter as GhParameter,
+    ParameterImpl,
+    Program as GhProgram,
+    Variable as GhVariable,
+)
+from ghidra.program.model.data import (
+    DataType as GhDataType,
+    FunctionDefinitionDataType,
+    ParameterDefinitionImpl,
+)
+from ghidra.program.model.mem import MemoryBlock as GhMemoryBlock
+from ghidra.program.util import (
+    ContextEvaluator,
+    SymbolicPropogator as GhSymbolicPropogator,
+)
 from ghidra.service.graph import GraphDisplayOptions, AttributedGraph, GraphType
 
+import java.lang  # For type checking (`java.lang.Object`, `java.lang.Iterable`)
 from java.awt import Color
 from java.util import ArrayList
 from java.math import BigInteger
@@ -73,18 +103,47 @@ from java.math import BigInteger
 import sys
 from abc import abstractmethod
 
-
 __version__ = "0.2.0"
 
 
 try:
     # Import types for static type hints (and catch import error in Jython)
-    from typing import Any, Callable, TYPE_CHECKING, Iterator, TypeVar, Generic
+    from typing import (
+        Any,
+        Callable,
+        Generic,
+        Iterable,
+        Iterator,
+        Protocol,
+        TYPE_CHECKING,
+        TypeIs,
+        TypeVar,
+    )
 except ImportError:
     TYPE_CHECKING = False
 
+    # Type checkers consider `TYPE_CHECKING` to be always `True` (even if we redefine it few lines above)
+    if not TYPE_CHECKING:
+        TypeVar = lambda name, *_, **__: name
 
-if sys.version_info.major == 2:
+        # Hacky solution to be able to use Generic[T] syntax even in older Python versions.
+        class _GenericMeta(type):
+            def __getitem__(cls, key):
+                return cls
+
+        if sys.version_info.major == 2:
+
+            class Generic:
+                __metaclass__ = _GenericMeta
+
+        else:
+            # In exec() since "metaclass=..." would be a syntax error in Python 2
+            exec("class Generic(metaclass=_GenericMeta):pass", globals())
+
+
+# `and not TYPE_CHECKING` is here to help type checkers a bit by not confusing
+# them with multiple definitions of same functions.
+if sys.version_info.major == 2 and not TYPE_CHECKING:
     # Jython support: this section is Jython specific
     from __main__ import (
         toAddr,
@@ -141,24 +200,26 @@ if sys.version_info.major == 2:
 else:
     # PyGhidra support: this section is PyGhidra specific
     from pyghidra.script import get_current_interpreter
+    from ghidra.app.script import GhidraScript
 
     interpreter = get_current_interpreter()
-    toAddr = get_current_interpreter().toAddr
-    createFunction = get_current_interpreter().createFunction
-    getDataAt = get_current_interpreter().getDataAt
-    createLabel = get_current_interpreter().createLabel
-    getState = get_current_interpreter().getState
-    createData = get_current_interpreter().createData
-    clearListing = get_current_interpreter().clearListing
-    getInstructionAt = get_current_interpreter().getInstructionAt
-    getBytes = get_current_interpreter().getBytes
-    getMonitor = get_current_interpreter().getMonitor
-    removeSymbol = get_current_interpreter().removeSymbol
-    getCurrentProgram = get_current_interpreter().getCurrentProgram
-    disassemble = get_current_interpreter().disassemble
-    analyzeChanges = get_current_interpreter().analyzeChanges
-    setBytes = get_current_interpreter().setBytes
-    runCommand = get_current_interpreter().runCommand
+    assert isinstance(interpreter, GhidraScript)
+    toAddr = interpreter.toAddr
+    createFunction = interpreter.createFunction
+    getDataAt = interpreter.getDataAt
+    createLabel = interpreter.createLabel
+    getState = interpreter.getState
+    createData = interpreter.createData
+    clearListing = interpreter.clearListing
+    getInstructionAt = interpreter.getInstructionAt
+    getBytes = interpreter.getBytes
+    getMonitor = interpreter.getMonitor
+    removeSymbol = interpreter.removeSymbol
+    getCurrentProgram = interpreter.getCurrentProgram
+    disassemble = interpreter.disassemble
+    analyzeChanges = interpreter.analyzeChanges
+    setBytes = interpreter.setBytes
+    runCommand = interpreter.runCommand
 
     # Python3 specific type definitions
     # The goal is to support both languages with a single codebase
@@ -207,16 +268,19 @@ if TYPE_CHECKING:
     long = int
     unicode = str  # type: ignore
 
+# Few "common" TypeVars
+T = TypeVar("T")
+T_co = TypeVar("T_co", covariant=True)
 
-class JavaObject:
-    """A fake class, never instantiated, used only for static type hints."""
+# Mimic Java iterator interface so we can use it for typechecking
+if TYPE_CHECKING:
 
-    def __getattribute__(self, name):  # type: (str) -> Any
-        """This function exists only to make mypy happy."""
-        pass
+    class JavaIterator(Protocol[T_co]):
+        def hasNext(self) -> bool: ...
+        def next(self) -> T_co: ...
 
 
-def _python_int(value):
+def _python_int(value):  # type: (BigInteger|int) -> int
     """Convert a given int-like value to a Python integer.
 
     This is a jpype helper: it converts Java BigIntegers to Python ints.
@@ -239,7 +303,7 @@ def _python_str(string):  # type: (str|unicode) -> str
     return string
 
 
-class GhidraWrapper(object):
+class GhidraWrapper(Generic[T]):
     """The base class for all Ghidra wrappers.
 
     This function tries to be as transparent as possible - for example, it will
@@ -256,7 +320,7 @@ class GhidraWrapper(object):
 
     Similarly, equality is based on the underlying Java object."""
 
-    def __init__(self, raw):  # type: (JavaObject|int|str|GhidraWrapper) -> None
+    def __init__(self, raw):  # type: (T|GhAddress|int|str|GhidraWrapper[T]) -> None
         """Initialize the wrapper.
 
         This function will try to resolve the given object to a Ghidra object,
@@ -269,7 +333,7 @@ class GhidraWrapper(object):
         * If "raw" is None at this point, raise an exception.
         * Save the final "raw" value."""
 
-        if isinstance(raw, (int, long, str, unicode, GenericAddress)):
+        if isinstance(raw, (int, long, str, unicode, GhAddress)):
             # Someone passed a primitive type to us.
             # If possible, try to resolve it with a "get" method.
             if hasattr(self, "get"):
@@ -288,11 +352,11 @@ class GhidraWrapper(object):
         if raw is None:
             raise RuntimeError("Object doesn't exist (refusing to wrap None)")
 
-        def _java_cast(raw):  # type: (Any) -> JavaObject
+        def _java_cast(raw):  # type: (Any) -> T
             """This function exists only to make type-checker happy"""
             return raw
 
-        self.raw = _java_cast(raw)
+        self.raw = _java_cast(raw)  # type: T
 
     def __str__(self):  # type: () -> str
         """Return a string representation of this object.
@@ -316,32 +380,37 @@ class GhidraWrapper(object):
         """Return the hash of this object.
 
         This just forwards the call to the underlying object."""
-        return self.raw.hashCode()
+        return self.raw.hashCode()  # type: ignore Everything has a `.hashCode()`
 
     def __eq__(self, other):  # type: (object) -> bool
         """Check if this object is equal to another.
 
         This just forwards the call to the underlying object."""
+        # Everything has a `.equals()` but Ghidra stubs doesn't know that
+        # so "type: ignore" it is...
         if isinstance(other, GhidraWrapper):
-            return self.raw.equals(other.raw)
-        return self.raw.equals(other)
+            return self.raw.equals(other.raw)  # type: ignore
+        return self.raw.equals(other)  # type: ignore
 
 
 # Aliases just for typechecking.
 if TYPE_CHECKING:
-    Addr = GenericAddress | int | str
+    Wrapped = T | GhidraWrapper[T]
+    """Simple shorthand for `T|GhidraWrapper[T]`"""
+
+    Addr = GhAddress | int | str
     """This library accepts one of three things as addressses:
-    1. A Ghidra GenericAddress object
+    1. A Ghidra Address object
     2. An integer representing an address
     3. A string representing a symbol name
     When returning a value, the address is always returned as an integer."""
 
-    Reg = JavaObject | str
+    Reg = GhRegister | str
     """This library accepts one of two things as registers:
     1. A Ghidra Register object
     2. A string representing a register name"""
 
-    DataT = GhidraWrapper | JavaObject | str
+    DataT = Wrapped[GhDataType] | str
     """This library accepts one of two things as a DataType:
     1. A Ghidra DataType object
     2. A string representing a DataType name (will be resolved)"""
@@ -357,7 +426,7 @@ HIGHLIGHT_COLOR = SearchConstants.SEARCH_HIGHLIGHT_COLOR  # type: Color
 """Default color used highlight - it should work with any theme."""
 
 
-def resolve(addr):  # type: (Addr) -> GenericAddress
+def resolve(addr):  # type: (Addr) -> GhAddress
     """Convert an arbitrary addressable value to a Ghidra Address object.
 
     This library accepts one of three things as addressses:
@@ -367,7 +436,7 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
     3. A string containing a symbol name
 
     This function is responsible from converting the addressable values (`Addr`)
-    to Ghidra addresses (`GenericAddress`).
+    to Ghidra addresses (`Address` object).
 
         >>> resolve(0x1234)
         0x1234
@@ -377,12 +446,12 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
         0x1234
 
     :param addr: An addressable value.
-    :return: A GenericAddress object representing the passed address.
+    :return: An Ghidra `Address` object representing the passed address.
 
     """
     if isinstance(addr, unicode):  # Why, Ghidra?
-        addr = addr.encode()
-    if isinstance(addr, GenericAddress):
+        addr = str(addr.encode())
+    if isinstance(addr, GhAddress):
         return addr
     if isinstance(addr, (int, long)):
         # Why convert to string? Java cannot handle large (unsigned) integers :/
@@ -392,7 +461,7 @@ def resolve(addr):  # type: (Addr) -> GenericAddress
     raise TypeError("Address must be a ghidra Address, int, or str")
 
 
-def try_resolve(addr):  # type: (Addr) -> GenericAddress | None
+def try_resolve(addr):  # type: (Addr) -> GhAddress | None
     """Convert an arbitrary addressable value to a Ghidra Address object.
 
     See `resolve` documentation for more details.
@@ -405,24 +474,24 @@ def try_resolve(addr):  # type: (Addr) -> GenericAddress | None
         return None
 
 
-def can_resolve(addr):  # type: (Addr) -> bool
+def can_resolve(addr):  # type: (object) -> TypeIs[Addr]
     """Check if a passed value address can be resolved.
 
     This is useful for checking if `resolve()` may succeed.
     See `resolve` documentation for more details.
     This only checks `addr` type. Resolve may still fail if addr is a string
     with invalid symbol name, or integer with invalid address offset."""
-    return isinstance(addr, (GenericAddress, int, long, unicode, str))
+    return isinstance(addr, (GhAddress, int, long, unicode, str))
 
 
-def unwrap(wrapper_or_java_type):  # type: (JavaObject|GhidraWrapper) -> JavaObject
-    "If the argument is a GhidraWrapper, return the underlying Java object." ""
+def unwrap(wrapper_or_java_type):  # type: (Wrapped[T]) -> T
+    """If the argument is a GhidraWrapper, return the underlying Java object."""
     if isinstance(wrapper_or_java_type, GhidraWrapper):
         return wrapper_or_java_type.raw
     return wrapper_or_java_type
 
 
-def collect_iterator(iterator):  # type: (JavaObject) -> list
+def collect_iterator(iterator):  # type: (JavaIterator[T]) -> list[T]
     """Collect a Java iterator to a Python list."""
     result = []
     while iterator.hasNext():
@@ -430,17 +499,7 @@ def collect_iterator(iterator):  # type: (JavaObject) -> list
     return result
 
 
-if TYPE_CHECKING:
-    # Hacky workaround to have a optional generic type variable using comment syntax.
-    T = TypeVar("T")
-    GenericT = Generic[T]
-else:
-
-    class GenericT:
-        pass
-
-
-class Graph(GenericT, GhidraWrapper):
+class Graph(GhidraWrapper[AttributedGraph], Generic[T]):
     """Wraps a Ghidra AttributedGraph object.
 
     We'd like to store arbitrary object in the graph, but it only supports
@@ -457,7 +516,7 @@ class Graph(GenericT, GhidraWrapper):
         clunky and can only store string IDs and string values.
 
         :param raw: The AttributedGraph object to wrap."""
-        GhidraWrapper.__init__(self, raw)
+        super().__init__(raw)
         self.data = {}
 
     @staticmethod
@@ -598,7 +657,7 @@ class Graph(GenericT, GhidraWrapper):
         description = graphtype.getDescription()
         options = GraphDisplayOptions(graphtype)
 
-        broker = getState().tool.getService(GraphDisplayBroker)
+        broker = getState().tool.getService(GraphDisplayBroker)  # type: ignore Ghidra stubs don't like interfaces
         display = broker.getDefaultGraphDisplay(False, getMonitor())
         display.setGraph(self.raw, options, description, False, getMonitor())
 
@@ -623,7 +682,7 @@ class Graph(GenericT, GhidraWrapper):
         origin_vid = _get_unique_string(origin)
         if self.raw.getVertex(origin_vid) is None:
             raise RuntimeError("{} is not a member of this graph".format(origin_vid))
-        tovisit = [(None, _get_unique_string(origin))]
+        tovisit = [(None, _get_unique_string(origin))]  # type: list[tuple[T|None, str]]
         visited = set()
         parents = {origin: None}  # type: dict[T, T|None]
         while tovisit:
@@ -746,7 +805,7 @@ class BodyTrait:
         self.body.unhighlight()
 
 
-class HighVariable(GhidraWrapper):
+class HighVariable(GhidraWrapper[GhHighVariable]):
     @property
     def symbol(self):  # type: () -> HighSymbol
         return HighSymbol(self.raw.getSymbol())
@@ -806,7 +865,7 @@ class HighVariable(GhidraWrapper):
         return all(vn.is_free for vn in self.varnodes)
 
 
-class HighSymbol(GhidraWrapper):
+class HighSymbol(GhidraWrapper[GhHighSymbol]):
     def rename(
         self, new_name, source=SourceType.USER_DEFINED
     ):  # type: (str, SourceType) -> None
@@ -814,7 +873,7 @@ class HighSymbol(GhidraWrapper):
 
         :param new_name: The new name of the symbol
         :param source: The source of the symbol"""
-        HighFunctionDBUtil.updateDBVariable(self.raw, new_name, None, source)
+        HighFunctionDBUtil.updateDBVariable(self.raw, new_name, None, source)  # type: ignore None can be passed instead of a DataType object
 
     @property
     def size(self):  # type: () -> int
@@ -856,9 +915,9 @@ class HighSymbol(GhidraWrapper):
         return self.raw.isThisPointer()
 
 
-class Register(GhidraWrapper):
+class Register(GhidraWrapper[GhRegister]):
     @staticmethod
-    def get(raw_or_name):  # type: (str|JavaObject) -> Register|None
+    def get(raw_or_name):  # type: (str|GhRegister) -> Register|None
         """Get a register by name"""
         if isinstance(raw_or_name, Str):
             raw_or_name = Program.current().getLanguage().getRegister(raw_or_name)
@@ -890,7 +949,7 @@ class Register(GhidraWrapper):
         return Varnode(raw)
 
 
-class Varnode(GhidraWrapper):
+class Varnode(GhidraWrapper[GhVarnode]):
     @property
     def has_value(self):  # type: () -> bool
         """Return true if this varnode can be converted to a integer value.
@@ -903,9 +962,9 @@ class Varnode(GhidraWrapper):
         """Get the value of this varnode. Traverse defining pcodeops if necessary."""
         if self.is_address or self.is_constant:
             return self.offset
-        if self.defining_op is None:
+        if self.maybe_defining_op is None:
             return None
-        return self.defining_op.result
+        return self.maybe_defining_op.result
 
     @property
     def offset(self):  # type: () -> int
@@ -1064,7 +1123,7 @@ class Varnode(GhidraWrapper):
             return []
         return [PcodeOp(x) for x in self.raw.getDescendants()]
 
-    def intersects(self, other):  # type: (Varnode) -> list[PcodeOp]
+    def intersects(self, other):  # type: (Varnode) -> bool
         """Return true if this varnode intersects other"""
         return self.raw.intersects(other.raw)
 
@@ -1078,7 +1137,7 @@ class Varnode(GhidraWrapper):
         return PcodeOp(result)
 
 
-class PcodeOp(GhidraWrapper):
+class PcodeOp(GhidraWrapper[GhPcodeOp]):
     """Pcode is a Ghidra's low-level intermediate language.
     Instructions from any processor are transformed into PCode
     before any analysis takes place. There is a finite number of
@@ -1226,7 +1285,7 @@ class PcodeOp(GhidraWrapper):
         return _pcode_node(self.raw.getParent())
 
 
-def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
+def _pcode_node(raw):  # type: (GhPcodeBlock) -> PcodeBlock
     """Create a BlockGraph or PcodeBlock, depending on arg type
 
     This is not technically necessary, but we use it because some people
@@ -1237,7 +1296,10 @@ def _pcode_node(raw):  # type: (JavaObject) -> PcodeBlock
     return PcodeBlock(raw)
 
 
-class PcodeBlock(GhidraWrapper):
+TPcodeBlock = TypeVar("TPcodeBlock", bound=GhPcodeBlock)
+
+
+class PcodeBlock(GhidraWrapper[TPcodeBlock], Generic[TPcodeBlock]):
     @property
     def out_edges(self):  # type: () -> list[PcodeBlock]
         """List of PcodeBlocks that can be reached from this node"""
@@ -1288,19 +1350,21 @@ class PcodeBlock(GhidraWrapper):
 
     @property
     def pcode(self):  # type: () -> list[PcodeOp]
-        raw_pcode = collect_iterator(self.raw.getIterator())
+        # TODO: This method is wrong as `PcodeOp` doesn't need to have a `.getIterator()`.
+        # `.getIterator()` is "only" avaliable for `BasicPcodeBlock`.
+        raw_pcode = collect_iterator(self.raw.getIterator())  # type: ignore
         return [PcodeOp(raw) for raw in raw_pcode]
 
 
-class BlockGraph(PcodeBlock):
+class BlockGraph(PcodeBlock[GhBlockGraph]):
     @property
     def blocks(self):  # type: () -> list[PcodeBlock]
         return [_pcode_node(self.raw.getBlock(i)) for i in range(self.raw.getSize())]
 
 
-class HighFunction(GhidraWrapper):
+class HighFunction(GhidraWrapper[GhHighFunction]):
     @staticmethod
-    def get(address):  # type: (JavaObject|str|Addr) -> HighFunction|None
+    def get(address):  # type: (GhHighFunction|str|Addr) -> HighFunction|None
         """Get a HighFunction at a given address, or None if there is none."""
         if isinstance(address, GhHighFunction):
             return HighFunction(address)
@@ -1329,7 +1393,7 @@ class HighFunction(GhidraWrapper):
         return [PcodeOp(raw) for raw in self.raw.getPcodeOps()]
 
     @property
-    def data_flow(self):  # type: () -> Graph[PcodeOp]
+    def data_flow(self):  # type: () -> Graph[Varnode]
         """Get a data flow graph of varnodes in this function.
 
         Note: I don't think this method is currently very useful, but you can
@@ -1338,7 +1402,7 @@ class HighFunction(GhidraWrapper):
 
         :returns: A graph where vertexes are varnodes, and edges mean that
         target varnode is a result of operation on source varnodes."""
-        g = Graph.create()
+        g = Graph.create()  # type: Graph[Varnode]
         for op in self.pcode:
             if op.output:
                 for inp in op.inputs:
@@ -1395,6 +1459,9 @@ class HighFunction(GhidraWrapper):
                 result.append(var)
         return result
 
+    # Python will set `__hash__` to `None` if we override `__eq__`
+    __hash__ = GhidraWrapper.__hash__
+
     def __eq__(self, other):  # type: (object) -> bool
         """Compare two high functions.
 
@@ -1404,7 +1471,7 @@ class HighFunction(GhidraWrapper):
         return self.function == other.function
 
 
-class Reference(GhidraWrapper):
+class Reference(GhidraWrapper[GhReference]):
     @property
     def is_call(self):  # type: () -> bool
         """Return True if the reference is a call."""
@@ -1433,7 +1500,7 @@ class Reference(GhidraWrapper):
     @property
     def source(self):  # type: () -> SourceType
         """Return a source type for this reference."""
-        return SourceType(self.raw.getSource())
+        return self.raw.getSource()
 
     def set_primary(self):  # type: () -> None
         """Set this reference as primary reference"""
@@ -1656,11 +1723,11 @@ class Operand:
         return self.raw
 
 
-class Instruction(GhidraWrapper, BodyTrait):
+class Instruction(GhidraWrapper[GhInstruction], BodyTrait):
     """Wraps a Ghidra Instruction object"""
 
     @staticmethod
-    def get(address):  # type: (JavaObject|str|Addr) -> Instruction|None
+    def get(address):  # type: (GhInstruction|str|Addr) -> Instruction|None
         """Get an instruction at the address, or None if not found.
 
         Note: This will return None if the instruction is not defined in Ghidra
@@ -1778,16 +1845,18 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Get the length of this instruction in bytes."""
         return self.length
 
-    def __convert_operand(self, operand):  # type: (JavaObject) -> Operand
+    def __convert_operand(
+        self, operand
+    ):  # type: (GhRegister|GhAddress|Scalar|JArray) -> Operand
         """Convert an operand to a scalar or address."""
         if isinstance(operand, GhRegister):
             return Operand(_python_str(operand.getName()))
-        elif isinstance(operand, GenericAddress):
+        elif isinstance(operand, GhAddress):
             return Operand(operand.getOffset())
         elif isinstance(operand, Scalar):
             return Operand(operand.getValue())
         elif _is_array(operand):
-            operands = [self.__convert_operand(o).raw for o in operand]  # type: ignore
+            operands = [self.__convert_operand(o).raw for o in operand]
             if len(operands) == 1:
                 # Unwrap the operands if there is only one operand
                 return Operand(operands[0])
@@ -1803,7 +1872,7 @@ class Instruction(GhidraWrapper, BodyTrait):
     @property
     def address(self):  # type: () -> int
         """Get the address of this instruction."""
-        return self.raw.getAddress().getOffset()
+        return self.raw.getMinAddress().getOffset()
 
     # Alias from Ghidra
     min_address = address
@@ -1886,7 +1955,7 @@ class Instruction(GhidraWrapper, BodyTrait):
         """Return true if this instruction fallthrough was overriden."""
         return self.raw.isFallThroughOverridden()
 
-    def write_jumptable(self, targets):  # type: (list[Addr]) -> None
+    def write_jumptable(self, targets):  # type: (Iterable[Addr]) -> None
         """Provide a list of addresses where this instruction may jump.
 
         Warning: For this to work, the instruction must be a part of a function.
@@ -1908,22 +1977,13 @@ class Instruction(GhidraWrapper, BodyTrait):
             raise RuntimeError("Instruction is not part of a function")
 
         targetlist = ArrayList([dest for dest in targets])
-        jumpTab = JumpTable(toAddr(self.address), targetlist, True)
+        jumpTab = JumpTable(toAddr(self.address), targetlist, True, 0)
         jumpTab.writeOverride(func.raw)
         func.fixup_body()
 
 
-class AddressRange(GhidraWrapper):
+class AddressRange(GhidraWrapper[GhAddressRange]):
     """Wraps a Ghidra AddressRange object."""
-
-    @property
-    def addresses(self):  # type: () -> list[int]
-        """Return the addresses in this range."""
-        return [a.getOffset() for a in self.raw.getAddresses(True)]
-
-    def __iter__(self):  # type: () -> Iterator[int]
-        """Iterate over the addresses in this range."""
-        return self.addresses.__iter__()
 
     @property
     def start(self):  # type: () -> int
@@ -1958,7 +2018,7 @@ class AddressRange(GhidraWrapper):
     @property
     def is_empty(self):  # type: () -> bool
         """Return True if this range is empty."""
-        return self.raw.isEmpty()
+        return self.length == 0
 
     def __nonzero__(self):  # type: () -> bool
         """Return True if this range is not empty."""
@@ -1969,7 +2029,10 @@ class AddressRange(GhidraWrapper):
         return AddressRange(self.raw.intersect(other.raw))
 
 
-class AddressSet(GhidraWrapper):
+TAddressSet = TypeVar("TAddressSet", bound=GhAddressSetView)
+
+
+class AddressSet(GhidraWrapper[TAddressSet], Generic[TAddressSet]):
     """Wraps a Ghidra AddressSetView object."""
 
     @staticmethod
@@ -2028,9 +2091,9 @@ class AddressSet(GhidraWrapper):
         """Computes the union of this set and the given set."""
         return AddressSet(self.raw.union(other.raw))
 
-    def __get_highlighter(self):  # type: () -> Any
+    def __get_highlighter(self):  # type: () -> ColorizingService
         tool = getState().getTool()
-        service = tool.getService(ColorizingService)
+        service = tool.getService(ColorizingService)  # type: ignore Ghidra stubs don't like interfaces
         if service is None:
             raise RuntimeError("Cannot highlight without the ColorizingService")
         return service
@@ -2039,16 +2102,16 @@ class AddressSet(GhidraWrapper):
         service = self.__get_highlighter()
         service.setBackgroundColor(self.raw, color)
 
-    def unhighlight(self):  # type: (Color) -> None
+    def unhighlight(self):
         service = self.__get_highlighter()
         service.clearBackgroundColor(self.raw)
 
 
-class BasicBlock(AddressSet, BodyTrait):
+class BasicBlock(AddressSet[CodeBlock], BodyTrait):
     """Wraps a Ghidra CodeBlock object"""
 
     @staticmethod
-    def _model(model):  # type: (str) -> Callable[[JavaObject], JavaObject]
+    def _model(model):  # type: (str) -> type[SimpleBlockModel]
         if model == "basic":
             return BasicBlockModel
         elif model == "simple":
@@ -2059,7 +2122,7 @@ class BasicBlock(AddressSet, BodyTrait):
     @staticmethod
     def get(
         raw_or_address, model="basic"
-    ):  # type: (JavaObject|str|Addr, str) -> BasicBlock|None
+    ):  # type: (Wrapped[CodeBlock]|int|str|Addr, str) -> BasicBlock|None
         """Get a BasicBlock object containing the given address, or return None.
 
         This function is tolerant and will accept different types of arguments:
@@ -2136,7 +2199,9 @@ class BasicBlock(AddressSet, BodyTrait):
         """Get a list of instructions in this basic block."""
         result = []
         instruction = getInstructionAt(resolve(self.start_address))
-        while instruction and instruction.getAddress().getOffset() <= self.end_address:
+        while (
+            instruction and instruction.getMinAddress().getOffset() <= self.end_address
+        ):
             result.append(Instruction(instruction))
             instruction = instruction.getNext()
         return result
@@ -2177,6 +2242,9 @@ class BasicBlock(AddressSet, BodyTrait):
         in this node."""
         return FlowType(self.raw.getFlowType())
 
+    # Python will set `__hash__` to `None` if we override `__eq__`
+    __hash__ = GhidraWrapper.__hash__
+
     def __eq__(self, other):  # type: (object) -> bool
         """Compare two basic blocks for equality.
 
@@ -2187,7 +2255,10 @@ class BasicBlock(AddressSet, BodyTrait):
         return self.address == other.address
 
 
-class Variable(GhidraWrapper):
+TVariable = TypeVar("TVariable", bound=GhVariable)
+
+
+class Variable(GhidraWrapper[TVariable], Generic[TVariable]):
     """Wraps a Ghidra Variable object"""
 
     @property
@@ -2235,7 +2306,7 @@ class Variable(GhidraWrapper):
 
     def set_comment(self, comment):  # type: (str|None) -> None
         """Set the comment for this variable"""
-        self.raw.setComment(comment)
+        self.raw.setComment(comment)  # type: ignore Argument can be `None`
 
     @property
     def is_auto(self):  # type: () -> bool
@@ -2308,7 +2379,7 @@ class Variable(GhidraWrapper):
     @property
     def source(self):  # type: () -> SourceType
         """Get the source type of this variable"""
-        return SourceType(self.raw.getSource())
+        return self.raw.getSource()
 
     @property
     def varnode(self):  # type: () -> Varnode
@@ -2344,7 +2415,7 @@ class Variable(GhidraWrapper):
         return Function(self.raw.getFunction())
 
 
-class Parameter(Variable):
+class Parameter(Variable[GhParameter]):
     """Wraps a Ghidra Parameter object."""
 
     @property
@@ -2458,15 +2529,15 @@ class FunctionCall(BodyTrait):
         return self.instruction.body
 
 
-class ClangTokenGroup(GhidraWrapper):
+class ClangTokenGroup(GhidraWrapper[GhClangTokenGroup]):
     """Represents a group of clang tokens from a decompiler.
 
     Warning: Currently this class is experimental, and should not be relied upon,
     except to get the Java object (with .raw) or maybe dump (.dump())."""
 
-    def _cleanup(self, token):  # type: (JavaObject) -> JavaObject
-        new = GhClangTokenGroup(token.Parent())
-        for token in list(token.iterator()):
+    def _cleanup(self, original):  # type: (GhClangTokenGroup) -> GhClangTokenGroup
+        new = GhClangTokenGroup(original.Parent())
+        for token in list(original.iterator()):
             if isinstance(token, (ClangCommentToken, ClangBreak)):
                 continue
             if isinstance(token, ClangSyntaxToken):
@@ -2482,7 +2553,7 @@ class ClangTokenGroup(GhidraWrapper):
         """Remove all whitespace and comments from this token group, recursively."""
         return ClangTokenGroup(self._cleanup(self.raw))
 
-    def _dump(self, token, indent=0):  # type: (JavaObject, int) -> None
+    def _dump(self, token, indent=0):  # type: (ClangNode, int) -> None
         if isinstance(token, GhClangTokenGroup):
             print("{}[group]".format(indent * "  ", token.__class__.__name__))
             for child in token.iterator():
@@ -2494,7 +2565,7 @@ class ClangTokenGroup(GhidraWrapper):
         self._dump(self.raw)
 
 
-class SymbolicPropogator(GhidraWrapper):
+class SymbolicPropogator(GhidraWrapper[GhSymbolicPropogator]):
     """Wraps SymbolicPropogator. Can be used to get known values at various
     locations in a given function (or outside of a function)"""
 
@@ -2504,7 +2575,7 @@ class SymbolicPropogator(GhidraWrapper):
 
     def flow_constants(
         self, addr, body, evaluator
-    ):  # type: (Addr, AddressSet, JavaObject) -> None
+    ):  # type: (Addr, AddressSet, ContextEvaluator) -> None
         """Flow constants from the given address in the given body
 
         :param addr: The address to start from
@@ -2532,24 +2603,24 @@ class SymbolicPropogator(GhidraWrapper):
         return value.value
 
 
-class Function(GhidraWrapper, BodyTrait):
+class Function(GhidraWrapper[GhFunction], BodyTrait):
     """Wraps a Ghidra Function object."""
 
     @staticmethod
-    def get(addr):  # type: (JavaObject|str|Addr) -> Function|None
+    def get(addr):  # type: (GhFunction|str|Addr) -> Function|None
         """Return a function at the given address, or None if no function
         exists there."""
         if isinstance(addr, GhFunction):
             return Function(addr)
         if isinstance(addr, Function):
             return Function(addr.raw)
-        addr = try_resolve(addr)
-        if addr is None:
+        resolved = try_resolve(addr)
+        if resolved is None:
             return None
-        raw = Program.current().getListing().getFunctionContaining(addr)
+        raw = Program.current().getListing().getFunctionContaining(resolved)
         if raw is None:
             return None
-        return Function(raw)  # type: ignore
+        return Function(raw)
 
     @staticmethod
     def all():  # type: () -> list[Function]
@@ -2603,7 +2674,7 @@ class Function(GhidraWrapper, BodyTrait):
 
     def set_comment(self, comment):  # type: (str|None) -> None
         """Set the comment of this function."""
-        self.raw.setComment(comment)
+        self.raw.setComment(comment)  # type: ignore Argument can be `None`
 
     @property
     def is_thunk(self):  # type: () -> bool
@@ -2622,7 +2693,7 @@ class Function(GhidraWrapper, BodyTrait):
 
     def set_repeatable_comment(self, comment):  # type: (str|None) -> None
         """Set the repeatable comment of this function."""
-        self.raw.setRepeatableComment(comment)
+        self.raw.setRepeatableComment(comment)  # type: ignore Argument can be `None`
 
     @property
     def parameters(self):  # type: () -> list[Parameter]
@@ -2659,9 +2730,7 @@ class Function(GhidraWrapper, BodyTrait):
         param = ParameterImpl(name, data.raw, reg.raw, Program.current())
         self.raw.addParameter(param, SourceType.USER_DEFINED)
 
-    def set_signature(
-        self, signature
-    ):  # type: (str) -> bool
+    def set_signature(self, signature):  # type: (str) -> bool
         """Change the signature of this function based on the C-like signature
         as a string.
 
@@ -2678,19 +2747,16 @@ class Function(GhidraWrapper, BodyTrait):
 
         # 'service' is None to only use types in the current program's data type
         # manager
-        parser = FunctionSignatureParser(
-            Program.current().getDataTypeManager(),
-            None
-        )
+        parser = FunctionSignatureParser(Program.current().getDataTypeManager(), None)  # type: ignore Argument can be `None`
 
         # 'originalSignature' is None to replace the signature
-        sig = parser.parse(None, signature)
+        sig = parser.parse(None, signature)  # type: ignore Argument can be `None`
 
-        return runCommand(ApplyFunctionSignatureCmd(
-            resolve(self.entrypoint),
-            sig,
-            SourceType.USER_DEFINED
-        ))
+        return runCommand(
+            ApplyFunctionSignatureCmd(
+                resolve(self.entrypoint), sig, SourceType.USER_DEFINED
+            )
+        )
 
     def set_signature_detail(
         self, ret, args
@@ -2710,16 +2776,18 @@ class Function(GhidraWrapper, BodyTrait):
         Returns whether the signature change was successful."""
         sig = FunctionDefinitionDataType(self.name)
         sig.setReturnType(DataType(ret).raw)
-        sig.setArguments([
-            ParameterDefinitionImpl(name, DataType(ty).raw, '')  # empty comment
-            for ty, name in args
-        ])
+        sig.setArguments(
+            *[
+                ParameterDefinitionImpl(name, DataType(ty).raw, "")  # empty comment
+                for ty, name in args
+            ]
+        )
 
-        return runCommand(ApplyFunctionSignatureCmd(
-            resolve(self.entrypoint),
-            sig,
-            SourceType.USER_DEFINED
-        ))
+        return runCommand(
+            ApplyFunctionSignatureCmd(
+                resolve(self.entrypoint), sig, SourceType.USER_DEFINED
+            )
+        )
 
     def fixup_body(self):  # type: () -> bool
         """Fixup the function body: follow control flow and add thunks."""
@@ -2805,7 +2873,7 @@ class Function(GhidraWrapper, BodyTrait):
         """Set the fixup of this function.
 
         :param fixup: The new fixup to set."""
-        self.raw.setCallFixup(fixup)
+        self.raw.setCallFixup(fixup)  # type: ignore Argument can be `None`
 
     @property
     def calls(self):  # type: () -> list[FunctionCall]
@@ -2825,7 +2893,7 @@ class Function(GhidraWrapper, BodyTrait):
         )
         return [BasicBlock(block) for block in blocks]
 
-    def _decompile(self, simplify="decompile"):  # type: (str) -> JavaObject
+    def _decompile(self, simplify="decompile"):  # type: (str) -> DecompileResults
         """Decompile this function (internal helper)."""
         decompiler = DecompInterface()
         decompiler.openProgram(Program.current())
@@ -3040,11 +3108,11 @@ class Function(GhidraWrapper, BodyTrait):
         return propagator
 
 
-class Symbol(GhidraWrapper):
+class Symbol(GhidraWrapper[GhSymbol]):
     """Wraps a Ghidra Symbol object."""
 
     @staticmethod
-    def resolve_thunk_if_exists(external_symbol):  # type: (JavaObject) -> JavaObject
+    def resolve_thunk_if_exists(external_symbol):  # type: (GhSymbol) -> GhSymbol
         """Returns a function thunk leading to a passed external symbol, if it exists.
 
         If there is no function thunk, original symbol is returned.
@@ -3070,7 +3138,7 @@ class Symbol(GhidraWrapper):
         return external_symbol
 
     @staticmethod
-    def resolve_external(external_symbol):  # type: (JavaObject) -> int
+    def resolve_external(external_symbol):  # type: (GhSymbol) -> int
         """Resolves an external address to a RAM location, if possible.
 
         If the symbol has no RAM location, just return its offset.
@@ -3091,7 +3159,7 @@ class Symbol(GhidraWrapper):
         return external_symbol.getAddress().getOffset()
 
     @staticmethod
-    def get(raw_or_name):  # type: (JavaObject|str|Addr) -> Symbol|None
+    def get(raw_or_name):  # type: (GhSymbol|str|Addr) -> Symbol|None
         """Get a symbol with the provided name or at the provided address.
 
         Return None if the symbol was not found.
@@ -3208,7 +3276,7 @@ class Symbol(GhidraWrapper):
         return self.raw.isExternal()
 
 
-class DataType(GhidraWrapper):
+class DataType(GhidraWrapper[GhDataType]):
     @staticmethod
     def get(name_or_raw):  # type: (DataT) -> DataType|None
         """Gets a data type by name, or returns None if not found.
@@ -3240,7 +3308,7 @@ class DataType(GhidraWrapper):
             managers = (
                 getState()
                 .getTool()
-                .getService(DataTypeManagerService)
+                .getService(DataTypeManagerService)  # type: ignore Ghidra stubs don't like interfaces
                 .getDataTypeManagers()
             )
             for manager in managers:
@@ -3262,18 +3330,21 @@ class DataType(GhidraWrapper):
         """If this data type is an enum, get the name of the value.
 
         :param value: the value to get the name of"""
-        return self.raw.getName(value)
+        # If `self.raw` is an `Enum`, then following line is correct.
+        return self.raw.getName(value)  # type: ignore
 
+    @property
     def length(self):  # type: () -> int
         """Get the length of this data type in bytes
 
-            >>> DataType('int').length()
+            >>> DataType('int').length
             4
         .
         """
         return self.raw.getLength()
 
-    __len__ = length
+    def __len__(self):  # type: () -> int
+        return self.length
 
     @staticmethod
     def from_c(c_code, insert=True):  # type: (str, bool) -> DataType
@@ -3303,10 +3374,10 @@ class DataType(GhidraWrapper):
 
         if insert:
             transaction = dtm.startTransaction("Adding new data")
-            dtm.addDataType(new_dt, None)
+            dtm.addDataType(new_dt, None)  # type: ignore Argument can be `None`
             dtm.endTransaction(transaction, True)
 
-        return new_dt
+        return DataType(new_dt)
 
     def create_at(self, address):  # type: (Addr) -> Data
         """Create a data of this type at the specified address
@@ -3315,7 +3386,7 @@ class DataType(GhidraWrapper):
         return Program.create_data(address, self)
 
 
-class Emulator(GhidraWrapper):
+class Emulator(GhidraWrapper[EmulatorHelper]):
     """Wraps a Ghidra EmulatorHelper object."""
 
     def __init__(self):  # type: () -> None
@@ -3395,7 +3466,7 @@ class Emulator(GhidraWrapper):
         :param value: new stack pointer value."""
         self.write_register(self.sp_register, resolve(value).getOffset())
 
-    def __getitem__(self, reg):  # type: (Reg|int) -> int
+    def __getitem__(self, reg):  # type: (Reg) -> int
         """Read the register of the emulated program.
 
             >>> emulator.write_register("eax", 1337)
@@ -3416,7 +3487,7 @@ class Emulator(GhidraWrapper):
         :param value: the value to write"""
         self.write_register(reg, value)
 
-    def read_register(self, reg):  # type: (Reg|int) -> int
+    def read_register(self, reg):  # type: (Reg) -> int
         """Read from the register of the emulated program.
 
             >>> emulator.write_register("eax", 1337)
@@ -3542,7 +3613,9 @@ class Emulator(GhidraWrapper):
             rawnum = self.read_bytes(offset, varnode.size)
             return from_bytes(rawnum)
         elif varnode.is_stack:
-            return self.raw.readStackValue(varnode.offset, varnode.size, False)
+            return _python_int(
+                self.raw.readStackValue(varnode.offset, varnode.size, False)
+            )
         elif varnode.is_register:
             language = Program.current().getLanguage()
             reg = language.getRegister(varnode.raw.getAddress(), varnode.size)
@@ -3569,7 +3642,7 @@ class Emulator(GhidraWrapper):
 
         :param address: the address to write to
         :param value: the value to write"""
-        self.raw.writeMemory(resolve(address), value)
+        self.raw.writeMemory(resolve(address), value)  # type: ignore It is OK to pass `bytes` as byte array
 
     def write_u8(self, address, value):  # type: (Addr, int) -> None
         """Write a byte to the emulated program.
@@ -3775,7 +3848,7 @@ class Emulator(GhidraWrapper):
         callback=lambda emu: None,
         stop_when=lambda emu: False,
         maxsteps=2**48,
-    ):  # type: (Addr, Addr|list[Addr], Callable[[Emulator], str|None], Callable[[Emulator], bool], int) -> None
+    ):  # type: (Addr, Addr|Iterable[Addr], Callable[[Emulator], str|None], Callable[[Emulator], bool], int) -> None
         """Emulate from start to end address, with callback for each executed address.
 
             >>> emu = Emulator()
@@ -3810,8 +3883,10 @@ class Emulator(GhidraWrapper):
         :param maxsteps: the maximum number of steps to execute"""
         self.set_pc(start)
 
-        if not isinstance(ends, (list, tuple)):
+        # Bit hacky way to check whenever `ends` is not an iterable.
+        if can_resolve(ends):
             ends = [ends]
+
         ends = [resolve(e).getOffset() for e in ends]
 
         while maxsteps > 0:
@@ -3850,11 +3925,11 @@ class Emulator(GhidraWrapper):
     emu_start = lambda self, begin, until: self.emulate(begin, until)
 
 
-class MemoryBlock(GhidraWrapper, BodyTrait):
+class MemoryBlock(GhidraWrapper[GhMemoryBlock], BodyTrait):
     """A Ghidra wrapper for a Ghidra MemoryBlock"""
 
     @staticmethod
-    def get(raw_or_name):  # type: (JavaObject|str|Addr) -> MemoryBlock|None
+    def get(raw_or_name):  # type: (GhMemoryBlock|str|Addr) -> MemoryBlock|None
         """Gets a MemoryBlock by name or containing the given address.
 
         Note: for a string argument, this will try to get memoryblock by name, and
@@ -3864,6 +3939,8 @@ class MemoryBlock(GhidraWrapper, BodyTrait):
         :param raw_or_name: name or address of MemoryBlock to get
         :return: the MemoryBlock, or None if not found
         """
+        if isinstance(raw_or_name, GhMemoryBlock):
+            return MemoryBlock(raw_or_name)
         memory = Program.current().getMemory()
         if isinstance(raw_or_name, str):
             raw = memory.getBlock(raw_or_name)
@@ -3919,7 +3996,7 @@ class MemoryBlock(GhidraWrapper, BodyTrait):
         return read_bytes(self.address, self.length)
 
 
-class Program(GhidraWrapper):
+class Program(GhidraWrapper[GhProgram]):
     """A static class that represents the current program"""
 
     @staticmethod
@@ -3986,11 +4063,13 @@ class Program(GhidraWrapper):
     @staticmethod
     def body():  # type: () -> AddressSet
         """Get the set of all addresses of the program."""
-        body = Program.current().getNamespaceManager().getGlobalNamespace().getBody()
+        # TODO: This function is wrong, `.getNamespaceManager()` is required only for `ProgramDB`,
+        # not `Program` objects.
+        body = Program.current().getNamespaceManager().getGlobalNamespace().getBody()  # type: ignore
         return AddressSet(body)
 
     @staticmethod
-    def current():  # type: () -> JavaObject
+    def current():  # type: () -> GhProgram
         """Get the current program. Equivalent to getCurrentProgram()
 
         This method must be used instead of currentProgram, because the latter
@@ -4007,22 +4086,22 @@ class Program(GhidraWrapper):
         analyzeChanges(Program.current())
 
 
-class Data(GhidraWrapper, BodyTrait):
-    """ Wraps a structure for convenient access by field name """
+class Data(GhidraWrapper[GhData], BodyTrait):
+    """Wraps a structure for convenient access by field name"""
 
     @staticmethod
-    def get(addr):  # type: (JavaObject|str|Addr) -> Data|None
+    def get(addr):  # type: (GhData|str|Addr) -> Data|None
         """Return a Data instance at the given address, or None if there is
         no Data defined there."""
         if isinstance(addr, GhData):
             return Data(addr)
-        addr = try_resolve(addr)
-        if addr is None:
+        resolved = try_resolve(addr)
+        if resolved is None:
             return None
-        raw = getDataAt(addr)
+        raw = getDataAt(resolved)
         if raw is None:
             return None
-        return Data(raw)  # type: ignore
+        return Data(raw)
 
     @property
     def is_constant(self):  # type: () -> bool
@@ -4104,7 +4183,7 @@ class Data(GhidraWrapper, BodyTrait):
     has_string_value = is_string
 
     @property
-    def raw_value(self):  # type: () -> JavaObject
+    def raw_value(self):  # type: () -> java.lang.Object
         """Get the underlying Ghidra value.
 
         This may be an unwrapped java object from Ghidra data model,
@@ -4127,7 +4206,7 @@ class Data(GhidraWrapper, BodyTrait):
 
         if isinstance(value, (str, unicode)):
             return _python_str(value)
-        elif isinstance(value, GenericAddress):
+        elif isinstance(value, GhAddress):
             return value.getOffset()
         elif isinstance(value, Scalar):
             return value.getValue()
@@ -4179,7 +4258,7 @@ class Data(GhidraWrapper, BodyTrait):
     @property
     def address(self):  # type: () -> int
         """Get the start address of this data."""
-        return self.raw.getAddress().getOffset()
+        return self.raw.getMinAddress().getOffset()
 
     @property
     def body(self):  # type: () -> AddressSet
@@ -4225,7 +4304,7 @@ def disassemble_bytes(
     for _ in range(0, max_instr):
         try:
             arr = data[offset : offset + 16]
-            rawinstr = dis.disassemble(address.add(offset), arr)
+            rawinstr = dis.disassemble(address.add(offset), arr)  # type: ignore It is OK to pass `bytes` as byte array
             instr = Instruction(rawinstr)
             if offset + instr.length > len(data):
                 break
@@ -4290,7 +4369,7 @@ def assemble_at(
     # wrapping. But let's wrap it for consistency.
     addr = resolve(address)
     asm = Assemblers.getAssembler(Program.current())
-    result = [Instruction(i) for i in asm.assemble(addr, instructions)]
+    result = [Instruction(i) for i in asm.assemble(addr, *instructions)]
 
     # Append NOPs at the end, if length is shorter than pad_to.
     # This is purely to make the assembled code look nicer.
@@ -4299,7 +4378,7 @@ def assemble_at(
         end_addr = last.address + last.length
         code_size = end_addr - addr.getOffset()
         if pad_to > code_size:
-            asm.assemble(addr.add(code_size), ["NOP"] * (pad_to - code_size))
+            asm.assemble(addr.add(code_size), *(["NOP"] * (pad_to - code_size)))
 
     # Do what Ghidra should do automaticaly, and automatically try to disassemble
     # jump targets from the newly assembled instructions
@@ -4368,7 +4447,7 @@ def get_string(address):  # type: (Addr) -> str|None
     :param address: address where string should be located."""
     string = getDataAt(resolve(address))
     if string and string.hasStringValue():
-        return string.getValue()
+        return string.getValue()  # type: ignore Should be OK because we check `.hasStringValue()`
     return None
 
 
@@ -4503,10 +4582,10 @@ def write_bytes(address, data):  # type: (Addr, bytes) -> None
     :param data: bytes to write."""
     addr = resolve(address)
     try:
-        setBytes(addr, data)
+        setBytes(addr, data)  # type: ignore It is OK to pass `bytes` as byte array
     except:
         clearListing(addr, addr.add(len(data) - 1))
-        setBytes(addr, data)
+        setBytes(addr, data)  # type: ignore
 
 
 def unhex(s):  # type: (str) -> bytes
@@ -4611,7 +4690,7 @@ def findone_pattern(byte_pattern, start=0):  # type: (str, Addr) -> int|None
     bytes = _pattern_to_bytes(byte_pattern)
     mask = _pattern_to_mask(byte_pattern)
     addr = (
-        Program.current().getMemory().findBytes(start, bytes, mask, True, getMonitor())
+        Program.current().getMemory().findBytes(start, bytes, mask, True, getMonitor())  # type: ignore It is OK to pass `bytes` as byte array
     )
     if not addr:
         return None
